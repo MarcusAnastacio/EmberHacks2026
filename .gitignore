@@ -1,0 +1,34 @@
+# ── Dependencies ────────────────────────────────────────────────────────────
+# Never commit node_modules. It is ~300 MB, platform-specific, and reproducible
+# from package.json + package-lock.json.
+node_modules/
+
+# ── Secrets ─────────────────────────────────────────────────────────────────
+# The app reads private conversation history and will call the Gemini API.
+# No key belongs in the repository.
+.env
+.env.*
+!.env.example
+
+# ── Logs ────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# ── Build output ────────────────────────────────────────────────────────────
+dist/
+out/
+build/
+release/
+
+# ── OS ──────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── Editors / IDEs ──────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
