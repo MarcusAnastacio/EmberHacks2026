@@ -19,6 +19,8 @@ import { buildDigest } from './lib/digest.js';
 import { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
 import { generateQuiz, planQuiz, quizSchema, quizCapabilities, assessReadiness, QUESTION_TYPES } from './lib/quiz.js';
 import { hasApiKey, listModels } from './lib/gemini.js';
+import { QuizStore, sqliteAvailable, defaultStorePath, GENERATOR_VERSION } from './lib/store.js';
+import { gradeAttempt, gradeOpen, gradeObjective, normalizeAnswer } from './lib/grade.js';
 
 export class CompatibilityLayer extends EventEmitter {
   constructor(options = {}) {
@@ -27,6 +29,129 @@ export class CompatibilityLayer extends EventEmitter {
     /** @type {Awaited<ReturnType<typeof scanAll>>|null} */
     this.catalog = null;
     this.scanning = null;
+    /** Lazily opened, so a read-only session never creates a database. */
+    this.store = null;
+    this.storeFile = options.storeFile;
+  }
+
+  /**
+   * The quiz database. Opened on first use, so browsing history never touches the disk.
+   * Pass `{ storeFile: ':memory:' }` for tests.
+   */
+  getStore() {
+    if (!this.store) this.store = new QuizStore(this.storeFile || defaultStorePath());
+    return this.store;
+  }
+
+  get storeInfo() {
+    return {
+      available: sqliteAvailable(),
+      path: this.store ? this.store.file : this.storeFile || defaultStorePath(),
+      generatorVersion: GENERATOR_VERSION,
+    };
+  }
+
+  /**
+   * Generate and save in one step.
+   *
+   * With `fromMessage` set, only topics at or after that point are considered, which is
+   * how an appended conversation extends an existing quiz instead of regenerating it.
+   */
+  async generateAndSaveQuiz(id, opts) {
+    const session = this.getSession(id);
+    if (!session) return null;
+    const quiz = await this.generateQuiz(id, opts);
+    if (!quiz || !quiz.ok) return quiz;
+    try {
+      const saved = this.getStore().saveQuiz(quiz, session, {
+        settings: { ...opts, types: quiz.settings?.types },
+        redaction: quiz.redaction,
+      });
+      return { ...quiz, stored: saved };
+    } catch (err) {
+      // A storage failure must not lose a quiz that was successfully generated.
+      return { ...quiz, stored: null, storeError: String(err?.message || err) };
+    }
+  }
+
+  /** One stored quiz, with its questions and flashcards. */
+  getQuiz(quizId) {
+    return this.getStore().getQuiz(quizId);
+  }
+
+  /** Newest quiz for a conversation, or null. */
+  getQuizForSession(id) {
+    return this.getStore().getQuizForSession(id);
+  }
+
+  /** Stored quizzes, newest first. Rows are summaries, not full question lists. */
+  listQuizzes(opts) {
+    return this.getStore().list(opts);
+  }
+
+  /**
+   * Is a stored quiz still valid, was the conversation appended to, or did the messages
+   * it was built from change?
+   */
+  quizStaleness(id, opts) {
+    const session = this.getSession(id);
+    if (!session) return null;
+    return this.getStore().staleness(session, opts);
+  }
+
+  /** Generate only about turns added since the stored quiz, then merge into it. */
+  async extendQuiz(id, opts = {}) {
+    const session = this.getSession(id);
+    if (!session) return null;
+    const staleness = this.getStore().staleness(session, opts);
+    if (staleness.state !== 'extended') return { ok: false, reason: staleness.state, staleness };
+
+    const fresh = await this.generateQuiz(id, { ...opts, fromMessage: staleness.fromMessage });
+    if (!fresh?.ok) return { ...fresh, staleness };
+
+    const previous = this.getStore().getQuiz(staleness.quizId);
+    const merged = {
+      ...previous,
+      questions: [...previous.questions, ...fresh.questions],
+      flashcards: [...previous.flashcards, ...fresh.flashcards],
+      topicsUsed: [...previous.topicsUsed, ...(fresh.topicsUsed || [])],
+      model: fresh.model,
+      settings: { ...previous.settings, ...fresh.settings, producedQuestions: previous.questions.length + fresh.questions.length },
+    };
+    const saved = this.getStore().saveQuiz(merged, session, { settings: merged.settings });
+    return { ok: true, added: { questions: fresh.questions.length, flashcards: fresh.flashcards.length }, quizId: saved.id, staleness, quiz: merged };
+  }
+
+  /** Grade an attempt, either against a stored quiz or a quiz object. */
+  async gradeQuiz(quizOrId, answers, opts) {
+    const quiz = typeof quizOrId === 'string' ? this.getStore().getQuiz(quizOrId) : quizOrId;
+    if (!quiz) return null;
+    const result = await gradeAttempt(quiz, answers, opts);
+    if (opts?.save && typeof quizOrId === 'string') {
+      result.attemptId = this.getStore().saveAttempt(quizOrId, {
+        answers,
+        score: result.score,
+        maxScore: result.maxScore,
+        results: result.perQuestion,
+      });
+    }
+    return result;
+  }
+
+  /** Grade a single open answer without an attempt around it. */
+  async gradeOne(question, answer, opts) {
+    if (question?.type === 'open') return gradeOpen(question, answer, opts);
+    return gradeObjective(question, answer);
+  }
+
+  /** Attempt history and best score for a stored quiz. */
+  attempts(quizId) {
+    return { attempts: this.getStore().attempts(quizId), best: this.getStore().bestScore(quizId) };
+  }
+
+  /** The answer to "delete everything you have stored about me". */
+  clearStoredQuizzes() {
+    return this.getStore().clear();
   }
 
   /** Every harness we know how to look for, detected or not. */
@@ -256,6 +381,8 @@ export { buildDigest, digestFits, extractTouched, renderTurnRange } from './lib/
 export { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
 export { generateQuiz, planQuiz, quizSchema, validateResult, quizCapabilities, assessReadiness, QUESTION_TYPES, READINESS, DEFAULTS as QUIZ_DEFAULTS } from './lib/quiz.js';
 export { generateJson, listModels, hasApiKey, resolveApiKey, GeminiError, DEFAULT_MODEL_CHAIN } from './lib/gemini.js';
+export { QuizStore, QuizStoreError, sqliteAvailable as storeAvailable, defaultStorePath, fingerprintSession, settingsKey, quizIdFor, GENERATOR_VERSION } from './lib/store.js';
+export { gradeAttempt, gradeOpen, gradeObjective, gradeMcq, gradeCloze, gradeSchema, normalizeAnswer } from './lib/grade.js';
 export {
   renderTree, collectDocs, collectManifests, commitsInWindow, workingTreeState,
 } from './lib/project.js';

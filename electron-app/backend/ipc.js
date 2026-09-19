@@ -45,6 +45,26 @@ export const IPC = {
   QUIZ_CAPABILITIES: 'compat:quiz-capabilities',
   /** main -> renderer: generation progress events */
   QUIZ_PROGRESS: 'compat:quiz-progress',
+  /** renderer -> main, { id, ...options }: generate AND persist */
+  GENERATE_AND_SAVE: 'compat:generate-and-save-quiz',
+  /** renderer -> main, { quizId }: one stored quiz */
+  GET_QUIZ: 'compat:get-quiz',
+  /** renderer -> main, { id }: newest stored quiz for a conversation */
+  QUIZ_FOR_SESSION: 'compat:quiz-for-session',
+  /** renderer -> main: stored quizzes, newest first */
+  LIST_QUIZZES: 'compat:list-quizzes',
+  /** renderer -> main, { id, ...settings }: is the stored quiz still usable */
+  QUIZ_STALENESS: 'compat:quiz-staleness',
+  /** renderer -> main, { id, ...options }: ask only about the new turns */
+  EXTEND_QUIZ: 'compat:extend-quiz',
+  /** renderer -> main, { quizId, answers, save? }: grade an attempt */
+  GRADE_QUIZ: 'compat:grade-quiz',
+  /** renderer -> main, { quizId }: attempt history and best score */
+  ATTEMPTS: 'compat:attempts',
+  /** renderer -> main: delete every stored quiz and attempt */
+  CLEAR_QUIZZES: 'compat:clear-quizzes',
+  /** renderer -> main: where the store lives and whether it is available */
+  STORE_INFO: 'compat:store-info',
   /** main -> renderer: scan progress events */
   PROGRESS: 'compat:progress',
   /** main -> renderer: scan finished */
@@ -85,6 +105,24 @@ export function registerCompatibilityIpc({ ipcMain, layer, getWindows = () => []
     [IPC.HAS_API_KEY, () => layer.hasApiKey()],
     [IPC.READINESS, (opts) => layer.assessReadiness(opts?.id, opts)],
     [IPC.QUIZ_CAPABILITIES, () => layer.quizCapabilities()],
+    [IPC.STORE_INFO, () => layer.storeInfo],
+    [IPC.GET_QUIZ, (opts) => layer.getQuiz(opts?.quizId)],
+    [IPC.QUIZ_FOR_SESSION, (opts) => layer.getQuizForSession(opts?.id)],
+    [IPC.LIST_QUIZZES, (opts) => layer.listQuizzes(opts)],
+    [IPC.QUIZ_STALENESS, (opts) => layer.quizStaleness(opts?.id, opts)],
+    [IPC.ATTEMPTS, (opts) => layer.attempts(opts?.quizId)],
+    [IPC.CLEAR_QUIZZES, () => layer.clearStoredQuizzes()],
+    [IPC.GENERATE_AND_SAVE, (opts) =>
+      layer.generateAndSaveQuiz(opts?.id, {
+        ...opts,
+        onProgress: (evt) => broadcast(IPC.QUIZ_PROGRESS, evt),
+      })],
+    [IPC.EXTEND_QUIZ, (opts) =>
+      layer.extendQuiz(opts?.id, {
+        ...opts,
+        onProgress: (evt) => broadcast(IPC.QUIZ_PROGRESS, evt),
+      })],
+    [IPC.GRADE_QUIZ, (opts) => layer.gradeQuiz(opts?.quizId, opts?.answers, opts)],
     // Long-running: progress is streamed on QUIZ_PROGRESS while this resolves.
     [IPC.GENERATE_QUIZ, (opts) =>
       layer.generateQuiz(opts?.id, {

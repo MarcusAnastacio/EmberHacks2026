@@ -20,6 +20,106 @@ VS Code Copilot Chat  28     0         0           ~/.config/Code/User/workspace
 
 ---
 
+## Backend structure
+
+```
+                         ┌── read-only ──────────────────────────────────────┐
+  other agents' stores   │  readers/     six readers, one per format family   │
+  (never written)        │  lib/expand   path templates -> concrete paths      │
+                         │  lib/text     content blocks -> text + tool calls   │
+                         │  lib/normalize  one Session schema                   │
+                         └───────────────────────┬──────────────────────────┘
+                                                 │ detect.js  scan + cache
+                                                 ▼
+                         ┌── deterministic, no model ────────────────────────┐
+                         │  lib/digest    conversation + project context      │
+                         │  lib/topics    segmentation, bounded slices        │
+                         │  lib/project   tree, docs, manifests, git           │
+                         │  lib/redact    secrets out of anything leaving      │
+                         │  lib/quiz      plan, schema, validate              │
+                         └───────────────────────┬──────────────────────────┘
+                                                 │ lib/gemini.js  one bounded call
+                                                 │   per topic, model fallback
+                                                 ▼
+                         ┌── the only write ─────────────────────────────────┐
+                         │  lib/store.js  SQLite: quizzes, attempts, coverage  │
+                         │  lib/grade.js  objective locally, open via API      │
+                         └──────────────────────────────────────────────────┘
+```
+
+| Layer | Files | Calls a model? | Writes? |
+|---|---|---|---|
+| Read other agents' history | `readers/*`, `lib/expand`, `lib/text`, `lib/normalize`, `detect.js` | no | **no** — opened read-only |
+| Understand the conversation | `lib/topics`, `lib/digest`, `lib/project`, `lib/redact` | no | no |
+| Generate | `lib/quiz`, `lib/gemini` | yes, one call per topic | no |
+| Persist and grade | `lib/store`, `lib/grade` | grading only, for `open` | **yes** |
+
+The two boundaries that matter:
+
+- **Nothing reads history through a write handle.** Every store is opened read-only and a
+  decode failure yields a placeholder rather than an exception, so a locked database
+  belonging to a running agent cannot be corrupted.
+- **`lib/store` is the only writer, and it stores questions, never transcripts.** There is
+  a test asserting that no message text appears anywhere in the database.
+
+### The four things you asked about
+
+| | Status |
+|---|---|
+| Persistent quiz saving | **Built.** `lib/store.js` — SQLite at `~/.agent-quiz/quiz.db` (or `AGENT_QUIZ_DB`). Quizzes, attempts, and topic coverage. Idempotent by id, so regenerating overwrites rather than duplicates. |
+| Detect updates, generate only the new part | **Built.** `quizStaleness()` returns `new` / `fresh` / `extended` / `diverged` / `settings_changed` / `generator_stale`. `extended` carries `fromMessage`, and `extendQuiz()` generates only about turns after it and merges. |
+| Every option settable from the frontend | **Built.** Options pass straight through `planQuiz` / `generateQuiz`, and `quizCapabilities()` returns the bounds, labels, defaults and `needsGrading` flags so nothing is hardcoded in the UI. |
+| Grading request ready | **Built.** `lib/grade.js`. Multiple choice and fill-in-the-blank are graded **locally, with no request**; only `open` calls the model, one call per answered question, at temperature 0. |
+
+```
+npm run quiz -- <id> --plan            # offline
+npm run quiz -- <id> --questions 6     # generate
+```
+
+### Storage
+
+```js
+layer.generateAndSaveQuiz(id, { questionCount, types, seed })   // generate + persist
+layer.quizStaleness(id, settings)      // why a stored quiz is or is not reusable
+layer.extendQuiz(id, settings)         // only the turns added since
+layer.listQuizzes()                    // sidebar rows
+layer.getQuiz(quizId)                  // questions + flashcards
+layer.gradeQuiz(quizId, answers, { save: true })
+layer.attempts(quizId)                 // history + best score
+layer.clearStoredQuizzes()             // "delete everything you have stored about me"
+```
+
+Staleness compares a **fingerprint of the messages the quiz was built from**, not a file
+mtime — agents append to their session files constantly, so an mtime changes even when
+nothing the quiz cared about did. Appending leaves the fingerprint intact, which is what
+separates `extended` from `diverged`:
+
+```
+new              no quiz yet
+fresh            identical content, same settings, same generator
+extended         messages were appended; the old quiz stands, fromMessage says where new work starts
+diverged         the messages the quiz was built from changed
+settings_changed same conversation, different options
+generator_stale  produced by an older GENERATOR_VERSION
+```
+
+### Grading
+
+| Type | Graded | Cost |
+|---|---|---|
+| `mcq` | locally, by option key, case-insensitively | free |
+| `cloze` | locally; case, whitespace, backticks and trailing punctuation folded; `alternatives` accepted; **partial credit per blank** | free |
+| `open` | one model call per answered question, temperature 0 | 1 request |
+
+Two details worth knowing. The overall mark for an open answer is **recomputed from the
+rubric weights** rather than taken from the model, and the verdict is derived from that
+recomputation — otherwise a `correct` label could sit on a two-thirds score. And an
+**empty answer short-circuits without a request**, since the outcome is already known and
+skipping a question is the case a user is most likely to hit.
+
+A grading failure is reported per question, so a model outage does not lose an attempt:
+the objective questions still score.
+
 ## Quick start
 
 ### Test it from the terminal (no Electron needed)

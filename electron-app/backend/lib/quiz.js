@@ -224,7 +224,13 @@ export function planQuiz(session, options = {}) {
   const requested = types.length === 0 ? 0 : Math.max(0, Math.floor(opts.questionCount));
   const topicsNeeded = types.length === 0 ? 1 : Math.max(1, Math.ceil(requested / types.length));
 
-  const { topics: allTopics, stats: topicStats } = deriveTopics(session, { maxTopics: opts.maxTopics });
+  const { topics: allTopicsRaw, stats: topicStats } = deriveTopics(session, { maxTopics: opts.maxTopics });
+
+  // Incremental generation. Topics are filtered AFTER derivation rather than by trimming
+  // the session first, so message indices stay absolute — `sourceRefs.messageIndex` has to
+  // name a real turn in the original conversation, and renumbering would break it.
+  const fromMessage = Number.isFinite(opts.fromMessage) ? Math.max(0, opts.fromMessage) : 0;
+  const allTopics = fromMessage > 0 ? allTopicsRaw.filter((t) => t.from >= fromMessage) : allTopicsRaw;
 
   // Drop topics too thin to carry a question. Without this a session of "hi" produced
   // a flashcard and a multiple-choice question about nothing in particular.
@@ -704,6 +710,7 @@ export async function generateQuiz(session, options = {}) {
     ok: questions.length > 0 || flashcards.length > 0,
     readiness: plan.readiness,
     droppedThinTopics: plan.droppedThinTopics,
+    fromMessage: plan.fromMessage,
     sessionId: session.id,
     title: session.title,
     project: session.project,
