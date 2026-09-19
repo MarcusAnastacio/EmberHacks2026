@@ -6,6 +6,8 @@ export interface QuizQuestion {
 	answer: number;
 	explanation: string;
 	concept: string;
+	hint?: string;
+	reference?: string;
 }
 
 export interface Quiz {

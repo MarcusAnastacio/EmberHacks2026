@@ -15,13 +15,13 @@ export async function generateQuiz(
 function parseQuiz(text: string): Quiz {
 	const jsonText = text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
 	const quiz = JSON.parse(jsonText) as Quiz;
-	if (!quiz.title || !quiz.overview || !Array.isArray(quiz.questions) || quiz.questions.length === 0) {
-		throw new Error('Gemini returned an incomplete quiz. Try generating it again.');
+	if (!quiz.title || !quiz.overview || !Array.isArray(quiz.questions) || quiz.questions.length !== 5) {
+		throw new Error('Gemini returned a quiz that does not contain exactly 5 questions. Try generating it again.');
 	}
 	for (const question of quiz.questions) {
-		if (!question.question || !Array.isArray(question.choices) || question.choices.length < 2 ||
+		if (!question.question || !Array.isArray(question.choices) || question.choices.length !== 4 || !question.explanation || !question.concept ||
 			!Number.isInteger(question.answer) || question.answer < 0 || question.answer >= question.choices.length) {
-			throw new Error('Gemini returned an invalid question. Try generating it again.');
+			throw new Error('Gemini returned an invalid four-choice question. Try generating it again.');
 		}
 	}
 	return quiz;
