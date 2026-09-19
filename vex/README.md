@@ -35,3 +35,17 @@ Run `npm install`, then press `F5` or run `npm run compile`. The extension bundl
 - `src/llm/` owns Gemini model discovery, prompts, transport, retries, and API errors.
 - `src/quiz/` owns quiz models, JSON validation, and quiz-generation orchestration.
 - `src/extension.ts` registers VS Code commands and coordinates these layers.
+
+## Inspecting Local Analysis
+
+The analyzer only reads the active editor document. It uses VS Code's document symbol provider for language-aware symbols and adds lightweight import/export entries from the active file. It does not scan or send the entire workspace.
+
+To inspect the discovered structure:
+
+1. Start the extension with `F5`.
+2. Open a TypeScript file containing an import, exported function or class, a method, and a variable.
+3. Open **View > Output**, select **Log (Extension Host)**, and run **VEX: Generate Quiz from Current File**.
+4. Find the `[VEX analyzer]` entry. It includes the file path, language, symbol count, names, kinds, and one-based line ranges.
+5. Repeat with a Python file containing `import`, `from ... import ...`, a function, a class, a method, and variables. Python symbol details appear when the Python language extension is installed and its symbol provider is active; import entries are detected locally regardless.
+
+The quiz still contains five questions. Gemini receives the active file source plus the local symbol structure, never the rest of the workspace.
