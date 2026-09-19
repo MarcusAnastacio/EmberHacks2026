@@ -200,6 +200,15 @@ export function scoreBand(percentage) {
 export function quizButtonState(staleness, progress = null) {
   const state = staleness?.state || 'new';
 
+  if (state === 'new') {
+    return {
+      action: 'configure',
+      label: 'Generate quiz',
+      reason: 'No quiz for this conversation yet.',
+      staleness: 'new',
+    };
+  }
+
   if (progress?.resumable) {
     const answered = Object.keys(progress.answers || {}).length;
     return {
@@ -210,52 +219,31 @@ export function quizButtonState(staleness, progress = null) {
     };
   }
 
-  switch (state) {
-    case 'fresh':
-      return {
-        action: 'open',
-        label: 'Quiz',
-        reason: 'A quiz is ready for this conversation.',
-        staleness: state,
-      };
-    case 'extended':
-      return {
-        action: 'configure',
-        label: 'Generate quiz',
-        reason: `This conversation has ${staleness.newMessages} new message${staleness.newMessages === 1 ? '' : 's'} since the last quiz.`,
-        staleness: state,
-      };
-    case 'diverged':
-      return {
-        action: 'configure',
-        label: 'Generate quiz',
-        reason: 'The part of this conversation the last quiz used has changed.',
-        staleness: state,
-      };
-    case 'generator_stale':
-      return {
-        action: 'configure',
-        label: 'Generate quiz',
-        reason: 'The stored quiz came from an older version of the generator.',
-        staleness: state,
-      };
-    case 'settings_changed':
-      // The stored quiz is still valid, so opening it is the safer offer; regenerating is
-      // one click away inside the quiz.
-      return {
-        action: 'open',
-        label: 'Quiz',
-        reason: 'Your current settings differ from the stored quiz.',
-        staleness: state,
-      };
-    default:
-      return {
-        action: 'configure',
-        label: 'Generate quiz',
-        reason: 'No quiz for this conversation yet.',
-        staleness: 'new',
-      };
-  }
+  // A STORED QUIZ ALWAYS OFFERS ITSELF, whatever its staleness.
+  //
+  // This used to fall through to "Generate quiz" whenever the transcript had grown, which
+  // was wrong twice over: a conversation in active use grows constantly, so the button was
+  // permanently a regeneration offer, and the only way to reach a stored quiz was to
+  // replace it. On this project it was self-inflicted, because the pi session recording the
+  // work grows with every message, so the state was always `extended` and a finished quiz
+  // could never be reopened.
+  //
+  // Staleness is still reported, as `reason` and `staleness`, so the UI can show it next to
+  // a deliberate Regenerate action. It just does not get to be the button.
+  const reason = {
+    fresh: 'A quiz is ready for this conversation.',
+    extended: `${staleness.newMessages} new message${staleness.newMessages === 1 ? '' : 's'} since this quiz was made.`,
+    diverged: 'The part of this conversation this quiz used has changed.',
+    settings_changed: 'Your current settings differ from this quiz.',
+    generator_stale: 'This quiz came from an older version of the generator.',
+  }[state];
+
+  return {
+    action: 'open',
+    label: 'Back to quiz',
+    reason: reason || 'A quiz is ready for this conversation.',
+    staleness: state,
+  };
 }
 
 /**

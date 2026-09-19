@@ -80,7 +80,10 @@ export function sessionSubtitle(session, { readiness } = {}) {
  * The generation settings, built from `capabilities` so no bound or label is duplicated
  * in the UI. `onChange({ questionCount, types })` fires on every change.
  */
-export function renderSettings(container, { capabilities, options, plan, readiness, busy, onChange = () => {} } = {}) {
+export function renderSettings(
+  container,
+  { capabilities, options, plan, readiness, busy, hasStoredQuiz = false, onChange = () => {}, onGenerate = null } = {},
+) {
   container.replaceChildren();
   if (!capabilities) return;
 
@@ -137,6 +140,20 @@ export function renderSettings(container, { capabilities, options, plan, readine
       ),
       h('div', { class: 'settings__row settings__row--types' }, ...toggles),
       planRow({ plan, readiness }),
+      onGenerate
+        ? h('div', { class: 'settings__actions' },
+            h('button', {
+              class: 'btn btn--primary',
+              type: 'button',
+              text: hasStoredQuiz ? 'Start generation' : 'Generate quiz',
+              disabled: busy || readiness?.ready === false || undefined,
+              onclick: onGenerate,
+            }),
+            hasStoredQuiz
+              ? h('span', { class: 'settings__hint', text: 'Replaces the stored quiz.' })
+              : null,
+          )
+        : null,
     ),
   );
 }

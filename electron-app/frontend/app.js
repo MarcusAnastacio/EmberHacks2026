@@ -88,7 +88,9 @@ function render() {
       plan: s.plan,
       readiness: s.readiness,
       busy: s.busy,
+      hasStoredQuiz: Boolean(s.quiz),
       onChange: updateOptions,
+      onGenerate: () => generate(),
     });
     renderStaleness(el.staleness, {
       staleness: s.staleness,
@@ -145,8 +147,11 @@ async function selectSession(id) {
 
     // Restore the quiz the user was partway through, if this conversation has one. The
     // backend decides whether there is a position to restore; the frontend only obeys.
-    await restoreQuizFor(id);
+    const restored = await restoreQuizFor(id);
     render();
+    // render() shows and hides panes; it does not draw a step. Without this the quiz
+    // pane was visible with nothing in it, which is what "the questions are blank" was.
+    if (restored) renderCurrentStep();
   } catch (err) {
     store.set({ notice: { level: 'error', text: String(err?.message || err) } });
   }
@@ -165,8 +170,8 @@ async function restoreQuizFor(sessionId) {
     steps = [];
     stepIndex = 0;
     responses = {};
-    store.set({ quiz: null, stage: 'idle', attempt: null, lastScore: null });
-    return;
+    store.set({ quiz: null, stage: 'idle', attempt: null, lastScore: null, band: null });
+    return false;
   }
 
   const progress = await api.progress({ quizId: stored.id });
@@ -192,8 +197,10 @@ async function restoreQuizFor(sessionId) {
     quiz: stored,
     stage: 'quiz',
     attempt: null,
+    band: null,
     lastScore: progress?.completed ? { score: progress.score, maxScore: progress.maxScore, percentage: progress.percentage } : null,
   });
+  return true;
 }
 
 async function updateOptions(options) {

@@ -819,46 +819,49 @@ await check('a part finished quiz offers to resume, above everything else', asyn
   // Losing your place is worse than a quiz being slightly out of date, so resume outranks
   // every staleness state, including one whose transcript has since grown.
   const inProgress = { resumable: true, answers: { a: 1, b: 2 } };
-  for (const state of ['fresh', 'extended', 'diverged', 'settings_changed', 'generator_stale', 'new']) {
+  // 'new' is excluded: with no stored quiz there is no position to resume, and that state
+  // is decided before progress is consulted.
+  for (const state of ['fresh', 'extended', 'diverged', 'settings_changed', 'generator_stale']) {
     const button = quizButtonState({ state, newMessages: 5 }, inProgress);
     assert.equal(button.action, 'resume', `${state} did not offer to resume`);
     assert.equal(button.label, 'Resume quiz');
     assert.match(button.reason, /2 answered/);
   }
 
-  // With nothing answered, staleness decides as before.
+  // With nothing answered, a stored quiz is offered; with no quiz there is nothing to offer.
   const untouched = { resumable: false, answers: {} };
   assert.equal(quizButtonState({ state: 'fresh' }, untouched).action, 'open');
-  assert.equal(quizButtonState({ state: 'extended', newMessages: 1 }, untouched).action, 'configure');
+  assert.equal(quizButtonState({ state: 'extended', newMessages: 1 }, untouched).action, 'open');
   assert.equal(quizButtonState({ state: 'new' }, null).action, 'configure');
 
   // A finished run has nothing pending, so it is not offered as a resume.
   assert.equal(quizButtonState({ state: 'fresh' }, { resumable: false, answers: {}, completed: true }).action, 'open');
 });
 
-await check('the button label and action follow the workflow', async () => {
-  // The product rule in one place, so the UI does not re-derive it from six states.
+await check('a stored quiz offers itself whatever its staleness', async () => {
+  // The rule that took a bug report. It used to fall through to "Generate quiz" whenever
+  // the transcript had grown, so a conversation in active use could never reopen its quiz:
+  // the button was permanently a regeneration offer and the only way in was to replace it.
   assert.deepEqual(quizButtonState({ state: 'new' }), {
     action: 'configure', label: 'Generate quiz', reason: 'No quiz for this conversation yet.', staleness: 'new',
   });
-  assert.equal(quizButtonState({ state: 'fresh' }).action, 'open');
-  assert.equal(quizButtonState({ state: 'fresh' }).label, 'Quiz');
 
-  // New content detected: back to generating, and the reason says why.
-  const extended = quizButtonState({ state: 'extended', newMessages: 4 });
-  assert.equal(extended.action, 'configure');
-  assert.match(extended.reason, /4 new messages/);
+  for (const state of ['fresh', 'extended', 'diverged', 'settings_changed', 'generator_stale']) {
+    const button = quizButtonState({ state, newMessages: 4 });
+    assert.equal(button.action, 'open', `${state} did not offer the stored quiz`);
+    assert.equal(button.label, 'Back to quiz', `${state} used the wrong label`);
+    assert.ok(button.reason, `${state} gave no reason`);
+  }
+
+  // Staleness is still reported, as a reason rather than as the button.
+  assert.match(quizButtonState({ state: 'extended', newMessages: 4 }).reason, /4 new messages/);
   assert.match(quizButtonState({ state: 'extended', newMessages: 1 }).reason, /1 new message\b/);
+  assert.equal(quizButtonState({ state: 'extended', newMessages: 1 }).staleness, 'extended');
 
-  assert.equal(quizButtonState({ state: 'diverged' }).action, 'configure');
-  assert.equal(quizButtonState({ state: 'generator_stale' }).action, 'configure');
-  // A settings difference does not invalidate the stored questions, so offer them.
-  assert.equal(quizButtonState({ state: 'settings_changed' }).action, 'open');
-
-  // Every state is handled, and nothing is undefined.
+  // Every state is handled and complete.
   for (const state of ['new', 'fresh', 'extended', 'diverged', 'settings_changed', 'generator_stale', undefined, null]) {
-    const button = quizButtonState(state ? { state } : state);
-    assert.ok(['configure', 'open'].includes(button.action), `no action for ${state}`);
+    const button = quizButtonState(state ? { state, newMessages: 1 } : state);
+    assert.ok(['configure', 'open', 'resume'].includes(button.action), `no action for ${state}`);
     assert.ok(button.label && button.reason, `incomplete button for ${state}`);
   }
 });
