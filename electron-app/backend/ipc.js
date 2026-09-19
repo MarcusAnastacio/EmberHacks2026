@@ -29,6 +29,10 @@ export const IPC = {
   REGISTRY: 'compat:registry',
   /** renderer -> main, { id, project?, budget? }: the bounded digest for one session */
   DIGEST: 'compat:digest',
+  /** renderer -> main, { id, maxTopics? }: deterministic topic segmentation */
+  TOPICS: 'compat:topics',
+  /** renderer -> main, { id, maxChars? }: every topic slice, each capped */
+  TOPIC_SLICES: 'compat:topic-slices',
   /** main -> renderer: scan progress events */
   PROGRESS: 'compat:progress',
   /** main -> renderer: scan finished */
@@ -63,6 +67,8 @@ export function registerCompatibilityIpc({ ipcMain, layer, getWindows = () => []
     }],
     [IPC.SESSION, (id) => layer.getSession(id)],
     [IPC.DIGEST, (opts) => layer.digest(opts?.id, opts)],
+    [IPC.TOPICS, (opts) => layer.topics(opts?.id, opts)],
+    [IPC.TOPIC_SLICES, (opts) => layer.topicSlices(opts?.id, opts)],
     [IPC.PAYLOAD, (opts) => layer.quizPayload(opts?.id, opts)],
     [IPC.SEARCH, (query) => layer.search(query)],
     [IPC.REGISTRY, () => layer.registry().map((h) => ({

@@ -71,6 +71,39 @@ if (flag('--digest')) {
   process.exit(0);
 }
 
+if (flag('--topics')) {
+  const id = flag('--topics');
+  const slices = has('--slices');
+  const result = slices
+    ? layer.topicSlices(id, { maxChars: Number(flag('--slice-chars', 12000)) })
+    : layer.topics(id, { maxTopics: Number(flag('--max-topics', 14)) });
+  if (!result) {
+    console.error('not found');
+    process.exit(1);
+  }
+  if (flag('--slice')) {
+    const which = flag('--slice');
+    const slice = layer.topicSlice(id, which, { maxChars: Number(flag('--slice-chars', 12000)) });
+    if (!slice) {
+      console.error('no such topic');
+      process.exit(1);
+    }
+    console.log(slice.text);
+    console.error(`\n--- slice ${slice.topicId} "${slice.label}" — ${slice.chars} chars (capped), truncated ${slice.truncated}\n--- files: ${slice.files.join(', ') || 'none'}\n--- tools: ${slice.tools.map((t) => t.name + '×' + t.count).join(', ')}`);
+    process.exit(0);
+  }
+  console.log(`${'ID'.padEnd(4)}${'SCORE'.padStart(7)}  ${'EXCH'.padStart(5)}  ${'CHARS'.padStart(8)}  ${'FILES'.padStart(5)}  LABEL`);
+  for (const t of result.topics) {
+    console.log(
+      `${t.id.padEnd(4)}${String(t.score).padStart(7)}  ${String(t.exchanges).padStart(5)}  ` +
+        `${String(t.chars).padStart(8)}  ${String(t.files.length).padStart(5)}  ${t.label.slice(0, 64)}`,
+    );
+  }
+  console.error(`\n--- topics stats: ${JSON.stringify(result.stats)}`);
+  if (slices) console.error(`--- slices: ${JSON.stringify(result.slices.map((s) => ({ id: s.topicId, chars: s.chars, truncated: s.truncated })))}`);
+  process.exit(0);
+}
+
 if (flag('--payload')) {
   console.log(JSON.stringify(layer.quizPayload(flag('--payload')), null, 2));
   process.exit(0);

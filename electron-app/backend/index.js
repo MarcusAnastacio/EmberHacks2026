@@ -16,6 +16,7 @@ import { EventEmitter } from 'node:events';
 import { scanAll, discoverStores, findSession, toQuizPayload, isQuizReady, loadRegistry, QUIZ_MIN_CHARS, QUIZ_MIN_USER_TURNS } from './detect.js';
 import { redactPayload } from './lib/redact.js';
 import { buildDigest } from './lib/digest.js';
+import { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
 
 export class CompatibilityLayer extends EventEmitter {
   constructor(options = {}) {
@@ -138,6 +139,34 @@ export class CompatibilityLayer extends EventEmitter {
     return buildDigest(session, opts);
   }
 
+  /**
+   * Deterministic topic segmentation of one conversation. No model call: cuts come
+   * from file-set changes, lexical overlap, pauses and transition markers, and each
+   * topic is labelled with its opening user turn.
+   */
+  topics(id, opts) {
+    const session = this.getSession(id);
+    if (!session) return null;
+    return deriveTopics(session, opts);
+  }
+
+  /** One bounded prompt body for a topic — Stage C's input. */
+  topicSlice(id, topicId, opts) {
+    const session = this.getSession(id);
+    if (!session) return null;
+    const { topics } = deriveTopics(session, opts);
+    const topic = topics.find((t) => t.id === topicId) || topics[Number(topicId) - 1];
+    if (!topic) return null;
+    return topicSlice(session, topic, opts);
+  }
+
+  /** Every topic slice, each capped. The complete bounded input set for generation. */
+  topicSlices(id, opts) {
+    const session = this.getSession(id);
+    if (!session) return null;
+    return topicSlices(session, opts);
+  }
+
   /** Redaction only, for inspecting what would be stripped. */
   redactionReport(id, opts) {
     const result = this.quizPayload(id, opts);
@@ -173,7 +202,8 @@ export { expandStorePath, globStorePaths } from './lib/expand.js';
 export { readStoreFile } from './readers/index.js';
 export { sqliteAvailable } from './readers/sqlite.js';
 export { redact, redactPayload, patternKinds } from './lib/redact.js';
-export { buildDigest, digestFits, extractTouched } from './lib/digest.js';
+export { buildDigest, digestFits, extractTouched, renderTurnRange } from './lib/digest.js';
+export { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
 export {
   renderTree, collectDocs, collectManifests, commitsInWindow, workingTreeState,
 } from './lib/project.js';

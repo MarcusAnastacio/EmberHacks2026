@@ -189,23 +189,54 @@ function clip(text, max) {
  * jump from a question to the exact turn it came from.
  */
 function renderConversation(session, { includeCode = true } = {}) {
-  const lines = [];
-  const lastAssistant = [...session.messages].map((m, i) => (m.role === 'assistant' ? i : -1)).filter((i) => i >= 0).pop();
+  return renderTurnRange(session, {
+    from: 0,
+    to: session.messages.length - 1,
+    includeCode,
+    finalIndex: lastAssistantIndex(session, 0, session.messages.length - 1),
+  });
+}
 
-  session.messages.forEach((message, index) => {
+/** The last assistant message in a range, which gets a larger allowance. */
+export function lastAssistantIndex(session, from, to) {
+  let found = -1;
+  for (let i = to; i >= from; i--) {
+    if (session.messages[i]?.role === 'assistant') {
+      found = i;
+      break;
+    }
+  }
+  return found;
+}
+
+/**
+ * Render a contiguous range of turns. Used by the digest for the whole session
+ * and by lib/topics.js to build a bounded slice for a single topic, so the two
+ * always agree on how a turn is represented.
+ */
+export function renderTurnRange(
+  session,
+  { from = 0, to = session.messages.length - 1, includeCode = true, finalIndex } = {},
+) {
+  const lines = [];
+  const lastAssistant = finalIndex ?? lastAssistantIndex(session, from, to);
+
+  for (let index = from; index <= to && index < session.messages.length; index++) {
+    const message = session.messages[index];
+    if (!message) continue;
     const stamp = message.ts ? new Date(message.ts).toISOString().slice(11, 16) : '';
     const tools = message.tools || [];
 
-    if (message.role === 'system') return;
+    if (message.role === 'system') continue;
 
     if (message.role === 'user') {
       lines.push(`[turn ${index}] USER ${stamp}`);
       lines.push(indent(clip(message.text, USER_TURN_CHARS)));
       lines.push('');
-      return;
+      continue;
     }
 
-    if (message.role === 'tool') return; // bodies are dropped at parse time anyway
+    if (message.role === 'tool') continue; // bodies are dropped at parse time anyway
 
     // Assistant
     const toolSummary = tools.length
@@ -234,7 +265,7 @@ function renderConversation(session, { includeCode = true } = {}) {
       }
     }
     lines.push('');
-  });
+  }
 
   return lines.join('\n').trim();
 }
@@ -381,7 +412,7 @@ function renderProject(session, touched, budget) {
  * @returns {{text: string, sections: object, stats: object}}
  */
 export function buildDigest(session, options = {}) {
-  const { project = true, includeCode = true, budget: budgetOverride } = options;
+  const { project = true, includeCode = true, budget: budgetOverride, hardMax } = options;
   const budget = { ...DEFAULT_BUDGET, ...(budgetOverride || {}) };
 
   const touched = extractTouched(session);
@@ -425,7 +456,6 @@ export function buildDigest(session, options = {}) {
 
   const rawConversation = renderConversation(session, { includeCode });
   const conversation = clipMiddle(rawConversation, conversationBudget);
-
   const text = [
     clip(header, budget.header),
     '',
@@ -443,20 +473,33 @@ export function buildDigest(session, options = {}) {
 
   const conversationOmitted = Math.max(0, rawConversation.length - conversation.length);
 
+  // Absolute ceiling, belt and braces. The section allocation above already
+  // targets budget.total, but a caller can pass a hardMax and that must hold
+  // whatever the sections did — an unbounded prompt is the one thing this module
+  // exists to prevent.
+  let hardChars = text.length;
+  let finalText = text;
+  if (hardMax && text.length > hardMax) {
+    hardChars = text.length - hardMax;
+    finalText = `${text.slice(0, Math.max(0, hardMax - 80))}\n\n… (hard limit reached: ${hardChars} chars omitted)`;
+  }
+
   return {
-    text,
+    text: finalText,
     sections: {
       header: header.length,
       conversation: conversation.length,
       conversationRaw: rawConversation.length,
       conversationOmitted,
       project: projectSection.text.length,
-      conversationShare: +(conversation.length / Math.max(1, text.length)).toFixed(3),
+      conversationShare: +(conversation.length / Math.max(1, finalText.length)).toFixed(3),
     },
     stats: {
-      chars: text.length,
+      chars: finalText.length,
       truncated: conversationOmitted + (projectSection.meta.truncated || 0),
+      hardTruncated: hardChars,
       budget: budget.total,
+      hardMax: hardMax || null,
       touchedEdited: touched.edited.length,
       touchedRead: touched.read.length,
       toolCalls: session.toolCalls || 0,

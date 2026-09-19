@@ -30,9 +30,13 @@ cd electron-app/backend
 npm run scan                     # scan this machine, print the sidebar table
 npm run scan:fixtures            # same table, using bundled sample stores → 33/36 detected
 npm run scan:json                # full sidebar catalog as JSON
+npm run docs:example             # regenerate docs/example-digest.md
 
 node cli.js --show <session-id>          # inspect one normalized session
-node cli.js --payload <session-id>       # print the exact JSON handed to Gemini
+node cli.js --digest <session-id>        # the bounded conversation + project digest
+node cli.js --topics <session-id>        # deterministic topic table
+node cli.js --topics <id> --slice 2      # one bounded topic slice
+node cli.js --payload <session-id>       # the redacted JSON handed to Gemini
 node cli.js --only pi,codex,cursor       # restrict the scan
 node cli.js --progress                   # per-harness progress lines on stderr
 ```
@@ -218,6 +222,8 @@ electron-app/backend/
 │   │                     #     Replaces values, keeps structure. See the Redaction section.
 │   ├── digest.js         #   The bounded, ordered digest of one conversation plus the
 │   │                     #     project context it touched. See the Digest section.
+│   ├── topics.js         #   Deterministic topic segmentation and bounded per-topic
+│   │                     #     slices. No model call. See the Topics section.
 │   └── project.js        #   Deterministic, read-only repository inspection: tree, docs,
 │                         #     manifests, git history. Bounded and never reads source.
 │
@@ -239,9 +245,15 @@ electron-app/backend/
 │   └── exports.js        #   Official "Export data" files: ChatGPT conversations.json
 │                         #     (walks the branch tree) and Claude conversations.jsonl.
 │
+├── docs/
+│   ├── example-digest.md    #  A worked digest with the process that derived it,
+│   │                        #    regenerable via `npm run docs:example`.
+│   └── generate-example.js  #  Builds a synthetic project + session and writes it.
+│
 ├── test/
 │   ├── redact.test.js    #   72 assertions over redact.js. 36 of them assert that benign
 │   │                     #     text is NOT touched — the false positives matter more.
+│   ├── topics.test.js    #   15 assertions over topic segmentation and slice bounds.
 │   ├── digest.test.js    #   24 assertions over the digest, run against a synthetic
 │   │                     #     project in a temp dir with a real git repo.
 │   └── mock-vscode-chat.js  #  Generates a byte-faithful VS Code chat operation log and
@@ -282,6 +294,8 @@ registry.json (36 harnesses, path templates)
       ├─► index.js digest()     → lib/digest.js compresses the conversation and adds
       │                           lib/project.js context, focused on what it touched
       │                           → { text, sections, stats }
+      ├─► index.js topics()     → lib/topics.js segments deterministically and caps
+      │                           each slice → { topics, slices, stats }
       └─► ipc.js                → renderer
 ```
 
@@ -405,6 +419,76 @@ hand over, so: git is invoked with `execFileSync` and an **argument array, never
 with a 4 s timeout, so a path containing shell metacharacters cannot become a command. Every
 directory walk is bounded in depth and entry count, every read is byte-capped, and a
 separate test asserts that building a digest leaves `git status` byte-identical.
+
+## Topics
+
+`lib/topics.js` divides a conversation into topics and produces one **bounded** prompt
+body per topic. It calls no model, so the whole pipeline is deterministic and the last
+unbounded prompt is removed.
+
+**A user turn is a topic statement.** Nothing a model writes is a better label for
+"why is the connection pool exhausted" than the user's own words, so labels are the
+opening user turn of each segment, trimmed at a word boundary. `summary` keeps 400
+characters of it verbatim.
+
+Boundaries are scored between consecutive exchanges — one user turn plus everything up
+to the next:
+
+| Signal | Weight | Reasoning |
+|---|---|---|
+| file-set change | 3 | the strongest available evidence that the subject moved |
+| word overlap drop between consecutive user turns | 2 | the user stopped talking about the same thing |
+| pause > 30 min / > 120 min | 1.5 / 3 | a deliberate gap usually means a new intent |
+| transition marker (`separately`, `now`, `next`, …) | 1 | and some are explicit |
+| a follow-up under 24 characters | −2 | "ok", "yes" do not start topics |
+
+Those cuts are semantic, and on a long session they are not enough on their own: a
+session that needs sixty topics to stay small will not fit fourteen, and merging the
+weakest boundaries produces one 736k-character topic against a 130k median which is
+then truncated anyway. So after semantic cutting, oversized segments are **split** at
+their strongest internal boundary, and every candidate is **ranked** by a deterministic
+quiz-value score — files edited, code blocks, error mentions, substance of the
+back-and-forth, size on a log scale. The top `maxTopics` are kept, in chronological
+order, and anything too small is folded into its neighbour **unless a strong cut
+precedes it** (a short topic the user explicitly moved to is still a topic).
+
+```bash
+npm run topics -- <session-id>                  # the topic table
+npm run topics -- <id> --slices --slice-chars 8000
+npm run topics -- <id> --slice 2                # print one bounded slice
+```
+
+### The bounds
+
+| Stage | Bound | Default |
+|---|---|---|
+| digest | `budget.total`, plus a `hardMax` backstop | 24,000 chars |
+| topic count | `maxTopics` | 14 |
+| **each generation prompt** | `topicSlice({ maxChars })` | 12,000 chars |
+| total prompt material | `maxTopics × maxChars` | 168,000 chars over ≤14 calls |
+
+That last row is the point this design exists to make. Session size no longer reaches
+the model: a 2.4M-character session and a 500k-character session both produce ceilings
+of 12,000 per request. Measured across 48 real sessions:
+
+| session chars | candidates | selected | dropped | coverage | median topic | largest slice |
+|---|---|---|---|---|---|---|
+| 2,471,294 | 168 | 14 | 154 | 16% | 29k | 12,037 |
+| 1,845,992 | 164 | 14 | 150 | 17% | 20k | 12,038 |
+| 854,640 | 96 | 14 | 82 | 31% | 19k | 12,038 |
+| 543,839 | 63 | 14 | 49 | 49% | 23k | 12,038 |
+| 539,962 | 48 | 14 | 34 | 53% | 18k | 12,038 |
+
+Read the coverage column honestly: a 2.4M-character session **cannot** be represented
+by fourteen bounded prompts, so 84% of it is never asked about. That is a real
+limitation, not a tuning problem — the cap trades coverage for a bounded number of
+requests. `stats.coverage`, `droppedTopics` and `droppedChars` exist so the caller can
+see the trade and raise `maxTopics` when a session is worth more questions.
+
+For a worked example of the whole pipeline with the process spelled out, see
+[`docs/example-digest.md`](docs/example-digest.md). It is generated by
+`npm run docs:example` from a synthetic project and session, so it contains nothing
+private and cannot go stale.
 
 ## Redaction
 

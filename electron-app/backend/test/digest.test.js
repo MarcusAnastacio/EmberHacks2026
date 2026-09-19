@@ -272,6 +272,23 @@ check('README content is included', () => {
   assert.ok(digest.text.includes('Manages a connection pool'), 'README excerpt missing');
 });
 
+check('documentation is not duplicated', () => {
+  // README.md is reachable both by name and by a *.md sweep; it used to appear
+  // twice, duplicating the excerpt and wasting the section budget.
+  const count = (digest.text.match(/--- README\.md ---/g) || []).length;
+  assert.equal(count, 1, `README excerpt appears ${count} times`);
+});
+
+check('a hardMax is enforced absolutely, whatever the sections did', () => {
+  for (const hardMax of [800, 2000, 6000]) {
+    const d = buildDigest(session, { hardMax });
+    assert.ok(d.stats.chars <= hardMax, `hardMax ${hardMax} exceeded by ${d.stats.chars - hardMax}`);
+  }
+  const loose = buildDigest(session);
+  const capped = buildDigest(session, { hardMax: 1500 });
+  assert.ok(capped.stats.chars < loose.stats.chars, 'hardMax did not reduce the output');
+});
+
 check('ignored directories are excluded from the tree', () => {
   assert.ok(!digest.text.includes('node_modules'), 'noise directory leaked into the tree');
 });

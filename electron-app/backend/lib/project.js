@@ -225,8 +225,13 @@ export function renderTree(root, { relevant = [], maxDepth = 4, maxEntries = 220
  */
 export function collectDocs(root, { limit = 3, perFile = 3000 } = {}) {
   const found = [];
+  const seen = new Set();
   const push = (relPath) => {
     if (found.length >= limit) return;
+    // README.md is reached twice — once by name from DOC_NAMES and once by the
+    // .md sweep below — which duplicated the whole excerpt in every digest.
+    if (seen.has(relPath)) return;
+    seen.add(relPath);
     const abs = path.join(root, relPath);
     const text = readBounded(abs);
     if (!text) return;
