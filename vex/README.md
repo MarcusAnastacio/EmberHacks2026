@@ -64,3 +64,16 @@ These limits can be changed under **Settings > Extensions > VEX**:
 - `vex.context.maxSymbols`: active-file symbols checked for definitions and references, default `20`.
 
 The complete active file remains the primary source sent to Gemini. Related files contribute only their highest-ranked metadata and budgeted excerpts.
+
+## Gemini Context Selection
+
+Before the Gemini request, `ContextSelector` creates a compact structured context. Its priority order is selected code, active file, important local symbols, related files, referenced symbols, agent changes, and project metadata. It includes a selection summary listing the files and symbols that survived the budget.
+
+Selector limits are configurable under **Settings > Extensions > VEX**:
+
+- `vex.context.maxSourceCharacters`: total source-character limit, default `24000`.
+- `vex.context.maxContextFiles`: maximum distinct files, default `4`.
+- `vex.context.maxContextSymbols`: maximum symbols, default `20`.
+- `vex.context.maxEstimatedTokens`: approximate context-token limit, default `6000`.
+
+Token estimates use approximately four characters per token and do not require a tokenizer dependency. The extension logs `[VEX context selector]` with the selected files, symbols, source characters, estimated tokens, and configured limits.

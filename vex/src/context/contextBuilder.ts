@@ -15,6 +15,12 @@ export async function buildLearningContext(editor: vscode.TextEditor): Promise<L
 	const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
 	const maxRelatedFiles = configuration.get<number>('maxRelatedFiles', 3);
 	const maxRelatedSourceCharacters = configuration.get<number>('maxRelatedSourceCharacters', 8000);
+	const contextBudget = {
+		maxSourceCharacters: configuration.get<number>('maxSourceCharacters', 24000),
+		maxFiles: configuration.get<number>('maxContextFiles', 4),
+		maxSymbols: configuration.get<number>('maxContextSymbols', 20),
+		maxEstimatedTokens: configuration.get<number>('maxEstimatedTokens', 6000),
+	};
 	let remainingCharacters = maxRelatedSourceCharacters;
 	const relevantContext = workspaceAnalysis.items
 		.filter(item => item.filePath !== editor.document.uri.fsPath)
@@ -32,6 +38,7 @@ export async function buildLearningContext(editor: vscode.TextEditor): Promise<L
 	return {
 		...analysis,
 		relevantContext,
+		contextBudget,
 		projectDescription: workspaceFolder?.name,
 	};
 }

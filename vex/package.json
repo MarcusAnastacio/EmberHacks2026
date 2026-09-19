@@ -88,6 +88,34 @@
           "minimum": 1,
           "maximum": 100,
           "description": "Maximum active-file symbols inspected for local references and definitions."
+        },
+        "vex.context.maxSourceCharacters": {
+          "type": "number",
+          "default": 24000,
+          "minimum": 1000,
+          "maximum": 100000,
+          "description": "Maximum source characters selected for the Gemini prompt."
+        },
+        "vex.context.maxContextFiles": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum distinct files represented in the Gemini prompt."
+        },
+        "vex.context.maxContextSymbols": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum symbols represented in the Gemini prompt."
+        },
+        "vex.context.maxEstimatedTokens": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 500,
+          "maximum": 32000,
+          "description": "Approximate maximum tokens for the compact context sent to Gemini."
         }
       }
     }

@@ -1,4 +1,5 @@
 import { LearningContext } from '../context/learningContext';
+import { buildGeminiContext } from '../context/contextSelector';
 import { QuizMode } from '../quiz/models';
 
 const modePrompts: Record<QuizMode, string> = {
@@ -11,13 +12,8 @@ export function buildQuizPrompt(context: LearningContext, mode: QuizMode): strin
 	return [
 		'You create educational quizzes for developers learning code written by an AI agent.',
 		modePrompts[mode],
-		`Analyze the following source file (${context.activeFilePath}). Do not assume behavior that is not supported by the code.`,
-		`Programming language: ${context.programmingLanguage}`,
-		context.codeSymbols?.length ? `LOCAL CODE STRUCTURE:\n${JSON.stringify(context.codeSymbols, null, 2)}` : '',
-		context.relevantContext?.length ? `RANKED RELATED CONTEXT (do not assume this is the full workspace):\n${JSON.stringify(context.relevantContext, null, 2)}` : '',
-		context.relatedSymbols?.length ? `Related symbols: ${context.relatedSymbols.join(', ')}` : '',
-		context.projectDescription ? `Project description: ${context.projectDescription}` : '',
-		context.agentChangeInformation ? `Agent/change information: ${context.agentChangeInformation}` : '',
+		'Use only the compact context below as evidence. Do not assume it represents the entire workspace.',
+		buildGeminiContext(context),
 		'Create 5 multiple-choice questions that teach the learner how this code works.',
 		'Each answer must be the zero-based index of the correct choice.',
 		'Return only valid JSON with this exact shape: {"title": string, "overview": string, "questions": [{"question": string, "choices": string[], "answer": number, "explanation": string, "concept": string}]}',
