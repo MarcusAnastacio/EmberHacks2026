@@ -58,7 +58,17 @@ async function requestWithModel(apiKey: string, body: string, models: string[], 
 		try {
 			return await requestOnce(apiKey, body, model);
 		} catch (error) {
-			if (!(error instanceof GeminiHttpError) || !isTransientStatus(error.status)) {
+			if (!(error instanceof GeminiHttpError)) {
+				throw error;
+			}
+			if (error.status === 404) {
+				console.info(`[VEX Gemini] Model ${model} was unavailable after discovery; trying the next compatible model.`);
+				if (modelIndex < models.length - 1) {
+					return requestWithModel(apiKey, body, models, modelIndex + 1);
+				}
+				throw new Error(`${error.message} Tried all ${models.length} discovered generateContent model(s).`);
+			}
+			if (!isTransientStatus(error.status)) {
 				throw error;
 			}
 			lastTransientError = error.message;
