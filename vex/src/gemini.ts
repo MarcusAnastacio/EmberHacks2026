@@ -30,6 +30,9 @@ const preferredModels = [
 	'gemini-2.5-pro',
 ];
 
+const maxTransientAttempts = 3;
+const transientRetryDelays = [1000, 2500, 5000];
+
 export async function generateQuiz(apiKey: string, code: string, fileName: string, mode: QuizMode): Promise<Quiz> {
 	const prompt = [
 		'You create educational quizzes for developers learning code written by an AI agent.',
@@ -56,11 +59,14 @@ async function requestGemini(apiKey: string, prompt: string): Promise<string> {
 	});
 
 	const models = await listGenerateContentModels(apiKey);
-	const model = preferredModels.find(candidate => models.includes(candidate)) ?? models[0];
-	if (!model) {
+	const orderedModels = [
+		...preferredModels.filter(candidate => models.includes(candidate)),
+		...models.filter(model => !preferredModels.includes(model)),
+	];
+	if (orderedModels.length === 0) {
 		throw new Error('Gemini returned no models that support generateContent for this API key. Check the key project and API access.');
 	}
-	return requestWithModel(apiKey, body, model);
+	return requestWithModel(apiKey, body, orderedModels, 0);
 }
 
 async function listGenerateContentModels(apiKey: string): Promise<string[]> {
@@ -83,7 +89,30 @@ async function listGenerateContentModels(apiKey: string): Promise<string[]> {
 	}
 }
 
-async function requestWithModel(apiKey: string, body: string, model: string): Promise<string> {
+async function requestWithModel(apiKey: string, body: string, models: string[], modelIndex: number): Promise<string> {
+	const model = models[modelIndex];
+	let lastTransientError = '';
+	for (let attempt = 0; attempt < maxTransientAttempts; attempt++) {
+		try {
+			return await requestOnce(apiKey, body, model);
+		} catch (error) {
+			if (!(error instanceof GeminiHttpError) || !isTransientStatus(error.status)) {
+				throw error;
+			}
+			lastTransientError = error.message;
+			if (attempt < maxTransientAttempts - 1) {
+				await delay(transientRetryDelays[attempt]);
+			}
+		}
+	}
+
+	if (modelIndex < models.length - 1) {
+		return requestWithModel(apiKey, body, models, modelIndex + 1);
+	}
+	throw new Error(`${lastTransientError} Tried ${maxTransientAttempts} times on ${models.length} available model(s).`);
+}
+
+async function requestOnce(apiKey: string, body: string, model: string): Promise<string> {
 	try {
 		const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
 			method: 'POST',
@@ -92,7 +121,7 @@ async function requestWithModel(apiKey: string, body: string, model: string): Pr
 		});
 		const data = await response.text();
 		if (!response.ok) {
-			throw new Error(formatGeminiError(response.status, data, model));
+			throw new GeminiHttpError(response.status, formatGeminiError(response.status, data, model));
 		}
 		try {
 			const parsed = JSON.parse(data) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
@@ -113,6 +142,21 @@ async function requestWithModel(apiKey: string, body: string, model: string): Pr
 		}
 		throw new Error(`Could not reach Gemini: ${error instanceof Error ? error.message : 'network request failed'}`);
 	}
+}
+
+class GeminiHttpError extends Error {
+	public constructor(public readonly status: number, message: string) {
+		super(message);
+		this.name = 'GeminiHttpError';
+	}
+}
+
+function isTransientStatus(status: number): boolean {
+	return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function delay(milliseconds: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
 function formatGeminiError(statusCode: number | undefined, body: string, model: string): string {
