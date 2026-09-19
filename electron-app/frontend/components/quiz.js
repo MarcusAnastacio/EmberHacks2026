@@ -209,7 +209,7 @@ function open(step, { result, onRespond, onNext, isLast }) {
         { class: 'criteria' },
         ...result.criteria.map((criterion) =>
           h('li', {
-            text: `${criterion.awarded >= 0.85 ? '✓' : criterion.awarded > 0 ? '~' : '✗'} ${criterion.criterion}${criterion.comment ? ` — ${criterion.comment}` : ''}`,
+            text: `${criterion.awarded >= 0.85 ? 'met' : criterion.awarded > 0 ? 'partly met' : 'not met'} ${criterion.criterion}${criterion.comment ? `. ${criterion.comment}` : ''}`,
           }),
         ),
       ),

@@ -193,7 +193,7 @@ export function renderPayload(container, { payload } = {}) {
     container.append(
       h('div', { class: 'redaction' },
         h('strong', { text: `${payload.redaction.total} secret${payload.redaction.total === 1 ? '' : 's'} redacted before sending` }),
-        h('span', { text: ` — ${kinds}` }),
+        h('span', { text: `, ${kinds}` }),
       ),
     );
   }

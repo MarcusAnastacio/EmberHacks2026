@@ -132,7 +132,7 @@ export function gradeSchema() {
 
 function buildGradePrompt(question, answer) {
   const rubric = (question.rubric || [])
-    .map((r, i) => `${i + 1}. ${r.criterion} (weight ${r.weight})${r.mustMention?.length ? ` — should mention: ${r.mustMention.join(', ')}` : ''}`)
+    .map((r, i) => `${i + 1}. ${r.criterion} (weight ${r.weight})${r.mustMention?.length ? `. Should mention: ${r.mustMention.join(', ')}` : ''}`)
     .join('\n');
 
   return `You are grading one written answer from a developer who is revising their own work.

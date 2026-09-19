@@ -225,6 +225,19 @@ await check('staleness reports new, fresh, extended, diverged and settings_chang
   store.close();
 });
 
+await check('a different focus means a different quiz', () => {
+  // Typing a different focus has to invalidate the stored quiz the same way a different
+  // question count does, or the button would offer a quiz built for another question.
+  const a = settingsKey({ ...SETTINGS, focus: 'architectural decisions' });
+  const b = settingsKey({ ...SETTINGS, focus: 'the bugs we fixed' });
+  const none = settingsKey({ ...SETTINGS });
+  assert.notEqual(a, b);
+  assert.notEqual(a, none);
+  assert.equal(a, settingsKey({ ...SETTINGS, focus: 'architectural decisions' }), 'not deterministic');
+  // Whitespace only is the same as none.
+  assert.equal(settingsKey({ ...SETTINGS, focus: '   ' }), none);
+});
+
 await check('a quiz from an older generator version is reported stale', () => {
   const store = QuizStore.memory();
   const s = twoTopicSession();

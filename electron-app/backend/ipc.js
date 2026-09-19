@@ -57,6 +57,8 @@ export const IPC = {
   LIST_QUIZZES: 'compat:list-quizzes',
   /** renderer -> main, { id, ...settings }: is the stored quiz still usable */
   QUIZ_STALENESS: 'compat:quiz-staleness',
+  /** renderer -> main, { id, ...settings }: label and action for the top-right button */
+  QUIZ_BUTTON: 'compat:quiz-button',
   /** renderer -> main, { id, ...options }: ask only about the new turns */
   EXTEND_QUIZ: 'compat:extend-quiz',
   /** renderer -> main, { quizId, answers, save? }: grade an attempt */
@@ -112,6 +114,7 @@ export function registerCompatibilityIpc({ ipcMain, layer, getWindows = () => []
     [IPC.QUIZ_FOR_SESSION, (opts) => layer.getQuizForSession(opts?.id)],
     [IPC.LIST_QUIZZES, (opts) => layer.listQuizzes(opts)],
     [IPC.QUIZ_STALENESS, (opts) => layer.quizStaleness(opts?.id, opts)],
+    [IPC.QUIZ_BUTTON, (opts) => layer.quizButton(opts?.id, opts)],
     [IPC.ATTEMPTS, (opts) => layer.attempts(opts?.quizId)],
     [IPC.CLEAR_QUIZZES, () => layer.clearStoredQuizzes()],
     [IPC.GENERATE_AND_SAVE, (opts) =>

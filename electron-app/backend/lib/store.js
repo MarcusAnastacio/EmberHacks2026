@@ -76,6 +76,9 @@ export function fingerprintSession(session, { upTo } = {}) {
 export function settingsKey(settings = {}) {
   const relevant = {
     questionCount: settings.questionCount ?? null,
+    // A different focus produces different questions, so it must invalidate a stored quiz
+    // the same way a different question count does.
+    focus: String(settings.focus || '').trim(),
     types: [...(settings.types || [])].sort(),
     flashcardsPerTopic: settings.flashcardsPerTopic ?? null,
     maxCharsPerTopic: settings.maxCharsPerTopic ?? null,

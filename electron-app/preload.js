@@ -27,6 +27,7 @@ const CH = {
   QUIZ_PROGRESS: 'compat:quiz-progress',
   // storage and grading
   QUIZ_STALENESS: 'compat:quiz-staleness',
+  QUIZ_BUTTON: 'compat:quiz-button',
   EXTEND_QUIZ: 'compat:extend-quiz',
   GET_QUIZ: 'compat:get-quiz',
   QUIZ_FOR_SESSION: 'compat:quiz-for-session',
@@ -73,6 +74,7 @@ contextBridge.exposeInMainWorld('compat', {
 
   // storage and grading
   quizStaleness: (o) => ipcRenderer.invoke(CH.QUIZ_STALENESS, o),
+  quizButton: (o) => ipcRenderer.invoke(CH.QUIZ_BUTTON, o),
   extendQuiz: (o) => ipcRenderer.invoke(CH.EXTEND_QUIZ, o),
   getQuiz: (o) => ipcRenderer.invoke(CH.GET_QUIZ, o),
   quizForSession: (o) => ipcRenderer.invoke(CH.QUIZ_FOR_SESSION, o),

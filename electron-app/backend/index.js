@@ -17,7 +17,10 @@ import { scanAll, discoverStores, findSession, toQuizPayload, isQuizReady, loadR
 import { redactPayload } from './lib/redact.js';
 import { buildDigest } from './lib/digest.js';
 import { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
-import { generateQuiz, planQuiz, quizSchema, quizCapabilities, assessReadiness, QUESTION_TYPES } from './lib/quiz.js';
+import {
+  generateQuiz, planQuiz, quizSchema, quizCapabilities, assessReadiness,
+  quizButtonState, QUESTION_TYPES,
+} from './lib/quiz.js';
 import { hasApiKey, listModels } from './lib/gemini.js';
 import { QuizStore, sqliteAvailable, defaultStorePath, GENERATOR_VERSION } from './lib/store.js';
 import { gradeAttempt, gradeOpen, gradeObjective, normalizeAnswer } from './lib/grade.js';
@@ -99,6 +102,12 @@ export class CompatibilityLayer extends EventEmitter {
     const session = this.getSession(id);
     if (!session) return null;
     return this.getStore().staleness(session, opts);
+  }
+
+  /** The label and action for the one button in the top right. */
+  quizButton(id, opts) {
+    const staleness = this.quizStaleness(id, opts);
+    return staleness ? quizButtonState(staleness) : null;
   }
 
   /** Generate only about turns added since the stored quiz, then merge into it. */
@@ -391,7 +400,7 @@ export { sqliteAvailable } from './readers/sqlite.js';
 export { redact, redactPayload, patternKinds } from './lib/redact.js';
 export { buildDigest, digestFits, extractTouched, renderTurnRange } from './lib/digest.js';
 export { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
-export { generateQuiz, planQuiz, quizSchema, validateResult, quizCapabilities, assessReadiness, QUESTION_TYPES, READINESS, DEFAULTS as QUIZ_DEFAULTS } from './lib/quiz.js';
+export { generateQuiz, planQuiz, quizSchema, validateResult, quizCapabilities, assessReadiness, quizButtonState, QUESTION_TYPES, READINESS, DEFAULTS as QUIZ_DEFAULTS } from './lib/quiz.js';
 export { generateJson, listModels, hasApiKey, resolveApiKey, GeminiError, DEFAULT_MODEL_CHAIN } from './lib/gemini.js';
 export { QuizStore, QuizStoreError, sqliteAvailable as storeAvailable, defaultStorePath, fingerprintSession, settingsKey, quizIdFor, GENERATOR_VERSION } from './lib/store.js';
 export { gradeAttempt, gradeOpen, gradeObjective, gradeMcq, gradeCloze, gradeSchema, normalizeAnswer } from './lib/grade.js';

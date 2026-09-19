@@ -126,7 +126,74 @@ export const DEFAULTS = {
   temperature: 0.75,
   /** Optional. Given, topic selection is reproducible; omitted, it is random. */
   seed: null,
+  /**
+   * Optional free text from the user, e.g. "focus on the architectural decisions".
+   * Passed to the model as an emphasis instruction. Capped and redacted like any other
+   * text on its way out, because a user may well type something secret into it.
+   */
+  focus: '',
 };
+
+/**
+ * What the one button in the top right should say and do.
+ *
+ * The described workflow is: a fresh conversation offers to generate, a conversation with
+ * a stored quiz offers to open it, and a conversation whose transcript has grown since
+ * that quiz went back to offering generation. That mapping is a product rule, so it lives
+ * here rather than being re-derived in the UI from six staleness states.
+ *
+ * @param {object} staleness  the result of QuizStore#staleness
+ * @returns {{action:'configure'|'open', label:string, reason:string, staleness:string}}
+ */
+export function quizButtonState(staleness) {
+  const state = staleness?.state || 'new';
+  switch (state) {
+    case 'fresh':
+      return {
+        action: 'open',
+        label: 'Quiz',
+        reason: 'A quiz is ready for this conversation.',
+        staleness: state,
+      };
+    case 'extended':
+      return {
+        action: 'configure',
+        label: 'Generate quiz',
+        reason: `This conversation has ${staleness.newMessages} new message${staleness.newMessages === 1 ? '' : 's'} since the last quiz.`,
+        staleness: state,
+      };
+    case 'diverged':
+      return {
+        action: 'configure',
+        label: 'Generate quiz',
+        reason: 'The part of this conversation the last quiz used has changed.',
+        staleness: state,
+      };
+    case 'generator_stale':
+      return {
+        action: 'configure',
+        label: 'Generate quiz',
+        reason: 'The stored quiz came from an older version of the generator.',
+        staleness: state,
+      };
+    case 'settings_changed':
+      // The stored quiz is still valid, so opening it is the safer offer; regenerating is
+      // one click away inside the quiz.
+      return {
+        action: 'open',
+        label: 'Quiz',
+        reason: 'Your current settings differ from the stored quiz.',
+        staleness: state,
+      };
+    default:
+      return {
+        action: 'configure',
+        label: 'Generate quiz',
+        reason: 'No quiz for this conversation yet.',
+        staleness: 'new',
+      };
+  }
+}
 
 /**
  * Everything the frontend needs to render the generation settings, so no option
@@ -430,11 +497,11 @@ export function quizSchema({ types, flashcardsPerTopic }) {
 
 // ── Prompt ─────────────────────────────────────────────────────────────────
 
-function buildPrompt({ slice, topic, types, flashcardsPerTopic, session }) {
+function buildPrompt({ slice, topic, types, flashcardsPerTopic, session, focus = '' }) {
   const typeList = types.length ? types.join(', ') : 'none';
   const questionSpec = types.length
     ? `Produce exactly ${types.length} question${types.length === 1 ? '' : 's'}, one of each of these types: ${typeList}.`
-    : 'Produce no questions this time — flashcards only.';
+    : 'Produce no questions this time. Flashcards only.';
 
   const byType = {
     mcq: '- mcq: exactly four options keyed A-D, exactly one correct. Distractors must be plausible to someone who half-remembers the conversation, not obviously wrong.',
@@ -442,12 +509,23 @@ function buildPrompt({ slice, topic, types, flashcardsPerTopic, session }) {
     open: '- open: a free-text question that requires explaining a decision, a cause or a trade-off rather than recalling a fact. Provide a rubric of 2-4 weighted criteria and a reference answer.',
   };
 
+  const focusBlock = focus
+    ? `
+WHAT THEY ASKED TO FOCUS ON
+${focus}
+
+Treat this as emphasis, not as a filter. Pick the questions that best serve it from the
+excerpt, and ignore it if the excerpt does not support it. Never invent material to
+satisfy it.
+`
+    : '';
+
   return `You are writing study material for the developer who had the conversation below.
 They already did the work; this is to test whether they still understand it.
 
 They chose the working directory: ${session.project}
 Topic: ${topic.label}
-
+${focusBlock}
 WHAT TO PRODUCE
 - Exactly ${flashcardsPerTopic} flashcards teaching the PREREQUISITE knowledge needed to answer the questions. They come first and must stand alone: define the concept, do not just restate what happened.
 ${questionSpec}
@@ -457,6 +535,15 @@ THE EXCERPT
 It has up to two labelled parts. PRECEDING CONTEXT is background from earlier in
 the same session — read it to understand how the topic was reached, but do not ask
 about it. Everything to ask about is under the TOPIC heading.
+
+HOUSE STYLE
+This is a hard requirement, not a preference. Everything you write must obey it.
+- No em dashes. Use a full stop, a comma, or "and". If you reach for one, rewrite the
+  sentence instead.
+- No emojis. None, anywhere, not even as a bullet or a check mark.
+- No decorative arrows, no box drawing, no stars.
+- Plain ASCII punctuation: straight quotes, three dots rather than an ellipsis character.
+- No exclamation marks. This is study material, not encouragement.
 
 READABILITY
 Write for someone skimming on a phone, not for a design review. The material is a
@@ -669,12 +756,19 @@ export async function generateQuiz(session, options = {}) {
         redaction.byKind[finding.kind] = (redaction.byKind[finding.kind] || 0) + 1;
       }
 
+      // The focus text is user-authored and goes to the model, so it is redacted and
+      // capped on the same terms as the transcript.
+      const focusText = opts.focus
+        ? redact(String(opts.focus).slice(0, 800)).text
+        : '';
+
       const prompt = buildPrompt({
         slice,
         topic,
         types: slot.types,
         flashcardsPerTopic: opts.flashcardsPerTopic,
         session,
+        focus: focusText,
       });
 
       opts.onProgress?.({ phase: 'topic-start', index, topicId: topic.id, label: topic.label, sliceChars: slice.chars });
@@ -747,6 +841,7 @@ export async function generateQuiz(session, options = {}) {
     model: modelsUsed.join(', ') || null,
     settings: {
       questionCount: plan.questionCount,
+      focus: opts.focus || undefined,
       expectedQuestions: plan.expectedQuestions,
       producedQuestions: questions.length,
       types: plan.types,

@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 
 import {
   planQuiz, quizSchema, validateResult, generateQuiz, quizCapabilities,
-  assessReadiness, QUESTION_TYPES, READINESS,
+  assessReadiness, quizButtonState, QUESTION_TYPES, READINESS,
 } from '../lib/quiz.js';
 import { finalizeSession } from '../lib/normalize.js';
 import { generateJson, GeminiError, parseJsonResponse, resetEnvCache } from '../lib/gemini.js';
@@ -716,6 +716,94 @@ await check('capabilities expose the question ceiling as numbers, not a helper',
   assert.ok(!JSON.stringify(caps).includes('=>'), 'capabilities must be plain data');
   // And it must survive the clone the renderer side performs.
   assert.doesNotThrow(() => structuredClone(caps));
+});
+
+// ── Focus text and the top-right button ────────────────────────────────────
+
+await check('a focus reaches the prompt, and is capped and redacted like anything else', async () => {
+  const prompts = [];
+  const restore = stubFetch(async (url, init) => {
+    prompts.push(JSON.parse(init.body).contents[0].parts[0].text);
+    return jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify({ flashcards: [], questions: [] }) }] } }] });
+  });
+  try {
+    // The focus is user-authored and goes to the model, so a secret typed into it must
+    // not travel. Same treatment as the transcript.
+    await generateQuiz(multiTopicSession(), {
+      questionCount: 1,
+      types: ['mcq'],
+      apiKey: 'k',
+      models: ['stub'],
+      focus: 'Focus on the architectural decisions. Also the key is sk-proj-EXAMPLENotARealOpenAIKey00 and that matters.',
+    });
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], /WHAT THEY ASKED TO FOCUS ON/);
+    assert.match(prompts[0], /architectural decisions/);
+    assert.ok(!prompts[0].includes('EXAMPLENotARealOpenAIKey00'), 'a secret in the focus reached the model');
+    assert.match(prompts[0], /\[redacted:/);
+  } finally {
+    restore();
+  }
+});
+
+await check('no focus means no focus block', async () => {
+  const prompts = [];
+  const restore = stubFetch(async (url, init) => {
+    prompts.push(JSON.parse(init.body).contents[0].parts[0].text);
+    return jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify({ flashcards: [], questions: [] }) }] } }] });
+  });
+  try {
+    await generateQuiz(multiTopicSession(), { questionCount: 1, types: ['mcq'], apiKey: 'k', models: ['stub'] });
+    assert.ok(!prompts[0].includes('WHAT THEY ASKED TO FOCUS ON'), 'an empty focus still produced a block');
+  } finally {
+    restore();
+  }
+});
+
+await check('the prompt forbids em dashes, emojis and decorative punctuation', async () => {
+  // A stated house style, enforced in the prompt because post-processing the model's
+  // prose is worse than asking it not to.
+  const prompts = [];
+  const restore = stubFetch(async (url, init) => {
+    prompts.push(JSON.parse(init.body).contents[0].parts[0].text);
+    return jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify({ flashcards: [], questions: [] }) }] } }] });
+  });
+  try {
+    await generateQuiz(multiTopicSession(), { questionCount: 1, types: ['mcq'], apiKey: 'k', models: ['stub'] });
+    assert.match(prompts[0], /HOUSE STYLE/);
+    assert.match(prompts[0], /No em dashes/);
+    assert.match(prompts[0], /No emojis/);
+    assert.match(prompts[0], /No exclamation marks/);
+  } finally {
+    restore();
+  }
+});
+
+await check('the button label and action follow the workflow', async () => {
+  // The product rule in one place, so the UI does not re-derive it from six states.
+  assert.deepEqual(quizButtonState({ state: 'new' }), {
+    action: 'configure', label: 'Generate quiz', reason: 'No quiz for this conversation yet.', staleness: 'new',
+  });
+  assert.equal(quizButtonState({ state: 'fresh' }).action, 'open');
+  assert.equal(quizButtonState({ state: 'fresh' }).label, 'Quiz');
+
+  // New content detected: back to generating, and the reason says why.
+  const extended = quizButtonState({ state: 'extended', newMessages: 4 });
+  assert.equal(extended.action, 'configure');
+  assert.match(extended.reason, /4 new messages/);
+  assert.match(quizButtonState({ state: 'extended', newMessages: 1 }).reason, /1 new message\b/);
+
+  assert.equal(quizButtonState({ state: 'diverged' }).action, 'configure');
+  assert.equal(quizButtonState({ state: 'generator_stale' }).action, 'configure');
+  // A settings difference does not invalidate the stored questions, so offer them.
+  assert.equal(quizButtonState({ state: 'settings_changed' }).action, 'open');
+
+  // Every state is handled, and nothing is undefined.
+  for (const state of ['new', 'fresh', 'extended', 'diverged', 'settings_changed', 'generator_stale', undefined, null]) {
+    const button = quizButtonState(state ? { state } : state);
+    assert.ok(['configure', 'open'].includes(button.action), `no action for ${state}`);
+    assert.ok(button.label && button.reason, `incomplete button for ${state}`);
+  }
 });
 
 // ── Report ─────────────────────────────────────────────────────────────────
