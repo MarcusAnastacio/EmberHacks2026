@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Extension build output
+dist/
+out/
+.vscode-test/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs and debug output
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Coverage and test artifacts
+coverage/
+.nyc_output/
+
+# TypeScript and bundler caches
+*.tsbuildinfo
+.esbuild/
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.vscode/*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
