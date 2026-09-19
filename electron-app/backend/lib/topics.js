@@ -384,40 +384,103 @@ function clip(text, max) {
 }
 
 /**
- * The bounded prompt body for one topic — this is Stage C's input, and it is the
- * only thing in the pipeline that grows with the session, so it is capped here.
+ * The bounded prompt body for one topic — Stage C's input, and the only thing in the
+ * pipeline that grows with the session, so it is capped here.
  *
- * Includes the topic's own turns in full-ish, plus the preceding topic's last
- * assistant turn as context ("this follows on from…").
+ * Topics start on user turns, so a slice taken literally would open with an
+ * assistant reply whose question is out of view. Measured on a 2.4M-character
+ * session, that produced questions opening "Following the updates to X…" and
+ * "Based on the evaluation of X…" — grounded, but written as continuations because
+ * that is genuinely what the model was shown. So a slice is three parts:
+ *
+ *   [context]  the PRECEDING EXCHANGE, explicitly labelled as background:
+ *              the user turn that opened it and the conclusion it reached. The
+ *              pair is what makes the topic read as a continuation rather than a
+ *              non-sequitur, and it is bounded far below the topic itself.
+ *   [topic]    the topic's own turns, rendered as in the digest.
+ *   [budget]   the context comes out of the same maxChars, so the cap holds.
  */
 export function topicSlice(session, topic, options = {}) {
-  const { maxChars = 12000, includeCode = true, contextTurns = 1 } = options;
+  const { maxChars = 12000, includeCode = true, contextChars = 1200 } = options;
 
-  const from = Math.max(0, topic.from - (topic.from > 0 ? 1 : 0));
+  const header = `--- TOPIC: ${topic.label} (turns ${topic.from}-${topic.to}) ---\n\n`;
+
+  // Everything shares one budget. The context is capped as a FRACTION of maxChars
+  // rather than an absolute, and the marker allowance is subtracted up front, so a
+  // small cap cannot be overrun by a fixed-size preamble — which is what happened
+  // when the context was added outside the budget.
+  const MARKER_ROOM = 80;
+  const contextBudget = Math.min(contextChars, Math.max(0, Math.floor(maxChars * 0.3)));
+  const context = buildPrecedingContext(session, topic, contextBudget);
+  const bodyBudget = Math.max(120, maxChars - header.length - context.text.length - MARKER_ROOM);
+
   const body = renderTurnRange(session, {
-    from,
+    from: topic.from,
     to: topic.to,
     includeCode,
     finalIndex: lastAssistantIndex(session, topic.from, topic.to),
   });
 
-  let text = body;
+  let bodyText = body;
   let truncated = 0;
-  if (text.length > maxChars) {
-    truncated = text.length - maxChars;
-    text = `${text.slice(0, maxChars)}\n… (${truncated} chars of this topic omitted)`;
+  if (bodyText.length > bodyBudget) {
+    truncated = bodyText.length - bodyBudget;
+    bodyText = `${bodyText.slice(0, bodyBudget)}\n… (${truncated} chars of this topic omitted)`;
   }
+
+  const text = `${context.text}${header}${bodyText}`;
 
   return {
     topicId: topic.id,
     label: topic.label,
     text,
     chars: text.length,
+    contextChars: context.text.length,
     truncated,
     messageRanges: topic.messageRanges,
     files: topic.files,
     tools: topic.tools,
   };
+}
+
+/**
+ * The preceding exchange, labelled as background.
+ *
+ * Deliberately the user turn AND the conclusion that followed it. Including only
+ * one — which is what the first version did — shows the model an answer to a
+ * question it cannot see, which reads as a dangling fragment.
+ */
+function buildPrecedingContext(session, topic, budget) {
+  if (topic.from <= 0 || budget <= 0) return { text: '', turns: [] };
+
+  const messages = session.messages;
+  let prevUser = -1;
+  for (let i = topic.from - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'user') { prevUser = i; break; }
+  }
+  if (prevUser === -1) return { text: '', turns: [] };
+
+  let prevAssistant = -1;
+  for (let i = topic.from - 1; i > prevUser; i--) {
+    if (messages[i]?.role === 'assistant') { prevAssistant = i; break; }
+  }
+
+  const lines = [
+    '--- PRECEDING CONTEXT (background from earlier in the same session; not part of this topic) ---',
+    '',
+  ];
+  lines.push(`[turn ${prevUser}] USER (earlier)`);
+  lines.push(clip(messages[prevUser].text, Math.floor(budget * 0.35)));
+  lines.push('');
+  if (prevAssistant !== -1) {
+    lines.push(`[turn ${prevAssistant}] ASSISTANT (earlier)`);
+    lines.push(clip(messages[prevAssistant].text, Math.floor(budget * 0.5)));
+    lines.push('');
+  }
+
+  let text = lines.join('\n');
+  if (text.length > budget) text = `${text.slice(0, budget)}\n… (earlier context truncated)\n\n`;
+  return { text: `${text}\n`, turns: [prevUser, prevAssistant].filter((i) => i !== -1) };
 }
 
 /** All topic slices for a session, each capped. Stage C's full input set. */

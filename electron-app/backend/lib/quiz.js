@@ -275,7 +275,17 @@ WHAT TO PRODUCE
 ${questionSpec}
 ${types.map((t) => byType[t]).filter(Boolean).join('\n')}
 
+THE EXCERPT
+It has up to two labelled parts. PRECEDING CONTEXT is background from earlier in
+the same session — read it to understand how the topic was reached, but do not ask
+about it. Everything to ask about is under the TOPIC heading.
+
 RULES
+- Every question must be understandable on its own, by someone who has not read the
+  excerpt. Do not open with "Following the updates to…", "Based on the evaluation
+  of…", "As discussed…", or any other continuation phrasing, and do not refer to
+  "the above", "earlier", or "the previous step". Name the subject explicitly:
+  write "the regex extractor's handling of negation", not "its negation handling".
 - Ground everything in the excerpt. Do not invent files, flags, APIs or numbers that do not appear in it.
 - Quote real identifiers, file names and code exactly as written.
 - sourceTurns must contain the turn numbers the material is drawn from. Only use turn numbers that appear in the excerpt.

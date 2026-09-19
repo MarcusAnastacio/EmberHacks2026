@@ -471,6 +471,31 @@ npm run topics -- <id> --slices --slice-chars 8000
 npm run topics -- <id> --slice 2                # print one bounded slice
 ```
 
+### What a slice contains, and why
+
+Topics start on **user turns**, so a slice taken literally would open with an assistant
+reply whose question is out of view. Measured on a 2.4M-character session, that produced
+questions phrased as continuations — five of nine opened *"Based on the evaluation of…"* or
+*"Following the updates to…"*: grounded and answerable given the excerpt, but written as
+continuations because that is genuinely what the model was shown.
+
+A slice is therefore three parts, and the context shares the same `maxChars` budget rather
+than sitting outside it:
+
+```
+--- PRECEDING CONTEXT (background from earlier in the same session; not part of this topic) ---
+[turn 165] USER (earlier)        <- the question
+[turn 167] ASSISTANT (earlier)   <- and the answer it got
+--- TOPIC: <label> (turns 184-201) ---
+[turn 184] USER ...
+```
+
+Both halves of the prior exchange matter: with only the assistant turn the model sees an
+answer to a question it cannot see, which reads as a dangling fragment. The prompt also
+tells the model which section is which and requires every question to be understandable on
+its own — no "as discussed", no "the above", no unnamed "it". That took continuation
+phrasing from 5 of 9 to 1 of 9.
+
 ### The bounds
 
 | Stage | Bound | Default |

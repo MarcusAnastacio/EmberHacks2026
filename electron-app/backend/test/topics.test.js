@@ -246,6 +246,61 @@ check('a slice contains the turns of its topic, not the whole session', () => {
   assert.equal(slice.topicId, cache.id);
 });
 
+check('a slice labels its preceding context as background', () => {
+  // Topics start on user turns, so a literal slice opens with an assistant reply
+  // whose question is out of view. Measured on a 2.4M-character session that
+  // produced questions phrased as continuations ("Based on the evaluation of…").
+  // The slice now carries the prior exchange, explicitly marked as background.
+  const s = twoSubjectSession();
+  const { topics } = deriveTopics(s, { maxTopics: 40 });
+  const later = topics.find((t) => t.from > 0);
+  assert.ok(later, 'expected a topic that is not the first');
+  const slice = topicSlice(s, later, { maxChars: 12000 });
+
+  assert.match(slice.text, /--- PRECEDING CONTEXT/, 'no context label');
+  assert.match(slice.text, /not part of this topic/, 'context is not marked as background');
+  assert.match(slice.text, /--- TOPIC: /, 'no topic label');
+  // Both halves of the prior exchange matter: the user turn is the question, and
+  // the assistant turn is the answer. Only one of them reads as a dangling fragment.
+  assert.match(slice.text, /USER \(earlier\)/, 'prior user turn missing');
+  assert.match(slice.text, /ASSISTANT \(earlier\)/, 'prior assistant turn missing');
+  assert.ok(slice.contextChars > 0, 'contextChars not reported');
+  // The context must come before the topic body.
+  assert.ok(slice.text.indexOf('PRECEDING CONTEXT') < slice.text.indexOf('--- TOPIC:'), 'context is not first');
+});
+
+check('the first topic has no preceding context to add', () => {
+  const s = twoSubjectSession();
+  const { topics } = deriveTopics(s, { maxTopics: 40 });
+  const first = topics[0];
+  assert.equal(first.from, s.messages.findIndex((m) => m.role === 'user'), 'fixture drift');
+  const slice = topicSlice(s, first, { maxChars: 12000 });
+  assert.equal(slice.contextChars, 0);
+  assert.ok(!slice.text.includes('PRECEDING CONTEXT'), 'the first topic invented context');
+});
+
+check('the context shares the slice budget rather than sitting outside it', () => {
+  const s = twoSubjectSession();
+  const { topics } = deriveTopics(s, { maxTopics: 40 });
+  const later = topics.find((t) => t.from > 0);
+  // A small cap must not be overrun by a fixed-size preamble.
+  for (const maxChars of [300, 600, 1200, 5000]) {
+    const slice = topicSlice(s, later, { maxChars, contextChars: 1200 });
+    assert.ok(slice.chars <= maxChars + 140, `cap ${maxChars} exceeded: ${slice.chars}`);
+    // And the context must shrink with the cap, not stay at its default.
+    if (maxChars <= 1200) {
+      assert.ok(slice.contextChars <= Math.floor(maxChars * 0.3) + 60, `context ${slice.contextChars} too large for cap ${maxChars}`);
+    }
+  }
+});
+
+check('a slice names its topic so the prompt is self-framing', () => {
+  const s = twoSubjectSession();
+  const { topics } = deriveTopics(s, { maxTopics: 40 });
+  const slice = topicSlice(s, topics[0], { maxChars: 12000 });
+  assert.ok(slice.text.includes(topics[0].label.slice(0, 30)), 'topic label not in the slice');
+});
+
 check('a slice reports what it dropped rather than hiding it', () => {
   const s = twoSubjectSession();
   const { topics } = deriveTopics(s, { maxTopics: 40 });
