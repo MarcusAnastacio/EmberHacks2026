@@ -21,8 +21,8 @@ export function buildQuizPrompt(context: LearningContext, mode: QuizMode): strin
 		'Every question must test whether the developer understands how the application works, not whether they can locate text.',
 		'Prioritize, in order: important implementation concepts; relationships between components; control flow; data flow; why important code exists; how functions/classes interact; what happens when inputs change; important implementation decisions; recently changed code; common misconceptions.',
 		'Avoid trivia such as variable names, line numbers, or answers obtainable by simple text matching. Prefer causal and behavioral questions, such as why authenticateUser() calls a repository before creating a session, over naming questions.',
-		'When supported by the context, include a concise relevant symbol/file reference. Add a hint only when it helps learning without revealing the answer.',
-		'Return only valid JSON with this exact shape: {"title": string, "overview": string, "questions": [{"question": string, "choices": [string, string, string, string], "answer": number, "explanation": string, "concept": string, "hint": string, "reference": string}]}',
-		'Use an empty string for optional hint or reference when the supplied context does not support one.',
+		'When supported by the context, include a code reference. A reference must use only an existing file and symbol from the supplied LearningContext, with the exact symbol line range shown there. Never invent a file path, symbol, or line number. Use an empty object when no reliable reference exists.',
+		'Return only valid JSON with this exact shape: {"title": string, "overview": string, "questions": [{"question": string, "choices": [string, string, string, string], "answer": number, "explanation": string, "concept": string, "hint": string, "reference": {"filePath": string, "symbolName": string, "startLine": number, "endLine": number}}]}',
+		'When a reference is not supported by the supplied context, use {} so the View Code action can be omitted.',
 	].filter(Boolean).join('\n\n');
 }

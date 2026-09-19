@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
-import { Quiz, QuizMode } from './quiz/models';
+import { CodeReference, Quiz, QuizMode } from './quiz/models';
 
 export interface QuizViewMessage {
-	command: 'generate' | 'setKey';
+	command: 'generate' | 'setKey' | 'viewCode';
 	mode?: QuizMode;
+	reference?: CodeReference;
 }
 
 export class QuizViewProvider implements vscode.WebviewViewProvider {
@@ -14,6 +15,7 @@ export class QuizViewProvider implements vscode.WebviewViewProvider {
 		private readonly extensionUri: vscode.Uri,
 		private readonly onGenerate: (mode: QuizMode) => Promise<void>,
 		private readonly onSetKey: () => Promise<void>,
+		private readonly onViewCode: (reference: CodeReference) => Promise<void>,
 	) {}
 
 	public resolveWebviewView(view: vscode.WebviewView): void {
@@ -26,6 +28,9 @@ export class QuizViewProvider implements vscode.WebviewViewProvider {
 			}
 			if (message.command === 'setKey') {
 				await this.onSetKey();
+			}
+			if (message.command === 'viewCode' && message.reference) {
+				await this.onViewCode(message.reference);
 			}
 		});
 	}
@@ -74,6 +79,7 @@ button.secondary { color: var(--ink); background: transparent; border: 1px solid
 .choice:hover { border-color: var(--accent); background: var(--vscode-list-hoverBackground); }
 .choice.correct { border-color: var(--vscode-testing-iconPassed); }
 .choice.wrong { border-color: var(--vscode-testing-iconFailed); }
+.view-code { width: auto; color: var(--vscode-textLink-foreground); background: transparent; border: 1px solid var(--line); margin: 0 0 8px; padding: 5px 8px; font-size: 11px; }
 .explanation { color: var(--muted); padding: 8px 0 0; line-height: 1.5; }
 .concept { color: var(--accent); font-size: 11px; margin-top: 8px; }
 [hidden] { display: none; }
@@ -117,6 +123,13 @@ function renderQuiz(data, sourceName) {
 		const section = document.createElement('article');
 		section.className = 'question';
 		section.innerHTML = '<h2>' + (index + 1) + '. ' + escapeHtml(item.question) + '</h2>';
+		if (item.reference && item.reference.filePath) {
+			const viewCode = document.createElement('button');
+			viewCode.className = 'view-code';
+			viewCode.textContent = 'View Code';
+			viewCode.addEventListener('click', () => vscode.postMessage({ command: 'viewCode', reference: item.reference }));
+			section.appendChild(viewCode);
+		}
 		item.choices.forEach((choice, choiceIndex) => {
 			const button = document.createElement('button');
 			button.className = 'choice';

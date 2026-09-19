@@ -1,5 +1,12 @@
 export type QuizMode = 'guided' | 'architecture' | 'challenge';
 
+export interface CodeReference {
+	filePath: string;
+	symbolName?: string;
+	startLine?: number;
+	endLine?: number;
+}
+
 export interface QuizQuestion {
 	question: string;
 	choices: string[];
@@ -7,7 +14,7 @@ export interface QuizQuestion {
 	explanation: string;
 	concept: string;
 	hint?: string;
-	reference?: string;
+	reference?: CodeReference;
 }
 
 export interface Quiz {

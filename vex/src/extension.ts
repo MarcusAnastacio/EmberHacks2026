@@ -5,6 +5,7 @@ import { generateQuiz } from './quiz/quizGenerator';
 import { QuizViewProvider } from './quizView';
 import { registerAgentSummaryParticipant } from './chat/agentSummaryParticipant';
 import { AgentSummary } from './context/agentSummary';
+import { CodeReference } from './quiz/models';
 
 const geminiKeySecret = 'vex.geminiApiKey';
 
@@ -14,6 +15,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		context.extensionUri,
 		mode => generateQuizForActiveEditor(context, quizView, mode),
 		() => setGeminiApiKey(context, quizView),
+		reference => viewCodeReference(reference),
 	);
 
 	context.subscriptions.push(
@@ -83,3 +85,23 @@ async function generateQuizForActiveEditor(
 }
 
 export function deactivate(): void {}
+
+async function viewCodeReference(reference: CodeReference): Promise<void> {
+	try {
+		const document = await vscode.workspace.openTextDocument(vscode.Uri.file(reference.filePath));
+		const editor = await vscode.window.showTextDocument(document);
+		if (reference.startLine === undefined || reference.endLine === undefined || document.lineCount === 0) {
+			return;
+		}
+		const startLine = Math.max(0, Math.min(document.lineCount - 1, reference.startLine - 1));
+		const endLine = Math.max(startLine, Math.min(document.lineCount - 1, reference.endLine - 1));
+		const start = new vscode.Position(startLine, 0);
+		const end = new vscode.Position(endLine, document.lineAt(endLine).text.length);
+		const range = new vscode.Range(start, end);
+		editor.selection = new vscode.Selection(start, end);
+		editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : 'Could not open the referenced code.';
+		void vscode.window.showErrorMessage(`VEX: ${message}`);
+	}
+}

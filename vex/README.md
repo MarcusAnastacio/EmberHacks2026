@@ -95,3 +95,7 @@ The summary is treated as observable input only. VEX does not generate or infer 
 VS Code does not expose a public API for third-party extensions to silently read an existing GitHub Copilot Chat transcript. VEX therefore provides an explicit `@vex /summarizeChanges` chat participant. Invoke it from Chat after the relevant work, and VEX will use only the chat turns visible to its participant plus the active file and observable Git changes. The resulting summary is stored in workspace state and used by the next VEX quiz.
 
 This does not scrape Copilot's private history or chain-of-thought. If VEX was not mentioned in a chat session, that session's prior turns are not available to VEX through the public API.
+
+## Quiz Code References
+
+Each quiz question may include a validated reference to a file, symbol, and one-based line range from the supplied `LearningContext`. Questions with a reliable reference show **View Code**, which opens the file and selects the referenced range. References that do not exactly match known context files or symbol ranges are discarded, so Gemini cannot invent navigation targets or line numbers.
