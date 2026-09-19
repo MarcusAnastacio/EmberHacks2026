@@ -128,6 +128,9 @@ export class ContextSelector {
 				appendSource('RELEVANT GIT DIFF', context.activeFilePath, changes.relevantDiff, 60);
 			}
 		}
+		if (context.agentSummary) {
+			appendMetadata('AGENT SUMMARY', formatAgentSummary(context.agentSummary));
+		}
 		if (context.projectDescription) {
 			appendMetadata('PROJECT', context.projectDescription);
 		}
@@ -172,4 +175,23 @@ function symbolRelevance(symbol: CodeSymbol): number {
 
 function estimateTokens(value: string): number {
 	return Math.ceil(value.length / 4);
+}
+
+function formatAgentSummary(summary: NonNullable<LearningContext['agentSummary']>): string {
+	const sections: string[] = [];
+	const add = (label: string, value: string | string[] | undefined): void => {
+		if (!value || (Array.isArray(value) && value.length === 0)) {
+			return;
+		}
+		sections.push(`${label}: ${Array.isArray(value) ? value.join('; ') : value}`);
+	};
+	add('Task/request', summary.task);
+	add('Files changed', summary.filesChanged);
+	add('Implementation changes', summary.implementationChanges);
+	add('Important decisions', summary.importantDecisions);
+	add('Concepts introduced', summary.conceptsIntroduced);
+	add('Change dependencies', summary.changeDependencies);
+	add('Assumptions or limitations', summary.assumptionsOrLimitations);
+	add('Tests performed', summary.testsPerformed);
+	return sections.join('\n');
 }

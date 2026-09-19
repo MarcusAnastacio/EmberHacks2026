@@ -3,6 +3,8 @@ import { buildLearningContext } from './context/contextBuilder';
 import { QuizMode } from './quiz/models';
 import { generateQuiz } from './quiz/quizGenerator';
 import { QuizViewProvider } from './quizView';
+import { registerAgentSummaryParticipant } from './chat/agentSummaryParticipant';
+import { AgentSummary } from './context/agentSummary';
 
 const geminiKeySecret = 'vex.geminiApiKey';
 
@@ -15,6 +17,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 
 	context.subscriptions.push(
+		registerAgentSummaryParticipant(summary => context.workspaceState.update('vex.agentSummary', summary)),
 		vscode.window.registerWebviewViewProvider(QuizViewProvider.viewType, quizView),
 		vscode.commands.registerCommand('vex.openQuiz', async () => {
 			await vscode.commands.executeCommand('vex.quizView.focus');
@@ -65,7 +68,8 @@ async function generateQuizForActiveEditor(
 		}
 	}
 
-	const learningContext = await buildLearningContext(editor);
+	const agentSummary = context.workspaceState.get<AgentSummary>('vex.agentSummary');
+	const learningContext = await buildLearningContext(editor, agentSummary);
 	const sourceName = learningContext.activeFilePath.split(/[\\/]/).pop() ?? 'active editor';
 	quizView.renderStatus('Gemini is building a lesson from your code...');
 	try {

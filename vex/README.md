@@ -83,3 +83,15 @@ Token estimates use approximately four characters per token and do not require a
 When the active file is inside a Git repository, VEX reads the current working-tree diff with `git diff HEAD`. It records changed files, added and deleted line counts, the active file's relevant diff, changed symbols whose ranges overlap changed lines, and the latest commit subject when available. This uses observable repository artifacts only; VEX does not attempt to access or reproduce an agent's private reasoning.
 
 Git analysis is optional. If Git is unavailable, the folder is not a repository, or the diff cannot be read, VEX continues generating the normal active-file quiz without change context. Git diagnostics are logged under `[VEX Git change analyzer]`.
+
+## Agent Summary API
+
+An external coding-agent integration can provide an optional `AgentSummary` to `buildLearningContext(editor, agentSummary)`, or attach one later with `attachAgentSummary(context, summary)`. The summary supports the task/request, changed files, implementation changes, important decisions, introduced concepts, change dependencies, assumptions or limitations, and tests performed.
+
+The summary is treated as observable input only. VEX does not generate or infer it, and it never attempts to retrieve hidden model reasoning. The combined summary is normalized to a strict maximum of 300 words. When no summary is supplied, the `agentSummary` field is omitted from `LearningContext`.
+
+## Copilot Chat Handoff
+
+VS Code does not expose a public API for third-party extensions to silently read an existing GitHub Copilot Chat transcript. VEX therefore provides an explicit `@vex /summarizeChanges` chat participant. Invoke it from Chat after the relevant work, and VEX will use only the chat turns visible to its participant plus the active file and observable Git changes. The resulting summary is stored in workspace state and used by the next VEX quiz.
+
+This does not scrape Copilot's private history or chain-of-thought. If VEX was not mentioned in a chat session, that session's prior turns are not available to VEX through the public API.

@@ -5,6 +5,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { buildGeminiContext } from '../context/contextSelector';
 import { LearningContext } from '../context/learningContext';
+import { attachAgentSummary, maxAgentSummaryWords } from '../context/agentSummary';
 // import * as myExtension from '../../extension';
 
 suite('Extension Test Suite', () => {
@@ -40,5 +41,25 @@ suite('Extension Test Suite', () => {
 		assert.ok(selected.includes('SELECTED CODE'));
 		assert.ok(selected.includes('FILES INCLUDED (1/1)'));
 		assert.ok(selected.includes('SYMBOLS INCLUDED (2/2)'));
+	});
+
+	test('Agent summaries are optional, observable, and capped at 300 words', () => {
+		const context: LearningContext = {
+			activeFilePath: 'active.ts',
+			programmingLanguage: 'typescript',
+			relevantSourceCode: 'const value = 1;',
+			contextBudget: { maxEstimatedTokens: 500 },
+		};
+		const summary = attachAgentSummary(context, {
+			task: Array.from({ length: 350 }, () => 'observable').join(' '),
+			testsPerformed: ['npm test'],
+		});
+		assert.ok(summary.agentSummary);
+		const wordCount = Object.values(summary.agentSummary ?? {})
+			.flatMap(value => Array.isArray(value) ? value : [value])
+			.join(' ')
+			.trim().split(/\s+/).length;
+		assert.ok(wordCount <= maxAgentSummaryWords);
+		assert.ok(!attachAgentSummary(context, undefined).agentSummary);
 	});
 });

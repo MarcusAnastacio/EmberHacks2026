@@ -26,6 +26,20 @@
         "title": "VEX: Set Gemini API Key"
       }
     ],
+    "chatParticipants": [
+      {
+        "id": "vex.agentSummary",
+        "name": "vex",
+        "fullName": "VEX Learning Summary",
+        "description": "Summarize observable coding-agent changes for a VEX quiz",
+        "commands": [
+          {
+            "name": "summarizeChanges",
+            "description": "Summarize the observable changes from this VEX chat session"
+          }
+        ]
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {

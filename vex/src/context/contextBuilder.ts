@@ -3,8 +3,9 @@ import { analyzeActiveFile } from '../analysis/activeFileAnalyzer';
 import { analyzeAgentChanges } from '../analysis/gitChangeAnalyzer';
 import { WorkspaceContextAnalyzer } from '../analysis/workspaceContextAnalyzer';
 import { LearningContext } from './learningContext';
+import { AgentSummary, normalizeAgentSummary } from './agentSummary';
 
-export async function buildLearningContext(editor: vscode.TextEditor): Promise<LearningContext> {
+export async function buildLearningContext(editor: vscode.TextEditor, agentSummary?: AgentSummary): Promise<LearningContext> {
 	const analysis = await analyzeActiveFile(editor);
 	const agentChangeContext = await analyzeAgentChanges(editor.document, analysis.codeSymbols);
 	const configuration = vscode.workspace.getConfiguration('vex.context');
@@ -15,6 +16,7 @@ export async function buildLearningContext(editor: vscode.TextEditor): Promise<L
 		maxSymbols: configuration.get<number>('maxSymbols', 20),
 	}).analyze(editor, analysis.codeSymbols);
 	const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+	const normalizedAgentSummary = normalizeAgentSummary(agentSummary);
 	const maxRelatedFiles = configuration.get<number>('maxRelatedFiles', 3);
 	const maxRelatedSourceCharacters = configuration.get<number>('maxRelatedSourceCharacters', 8000);
 	const contextBudget = {
@@ -42,6 +44,7 @@ export async function buildLearningContext(editor: vscode.TextEditor): Promise<L
 		relevantContext,
 		contextBudget,
 		agentChangeContext,
+		...(normalizedAgentSummary ? { agentSummary: normalizedAgentSummary } : {}),
 		projectDescription: workspaceFolder?.name,
 	};
 }
