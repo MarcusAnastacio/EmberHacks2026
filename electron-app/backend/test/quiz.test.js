@@ -1,0 +1,536 @@
+#!/usr/bin/env node
+// Quiz tests. No network.
+//
+// The Gemini call is exercised by replacing globalThis.fetch, so the fallback chain,
+// the retry behaviour and the validation path are all covered deterministically.
+// What is asserted:
+//   * topic count follows the requested question count and enabled types
+//   * flashcards are always produced, even with no question types enabled
+//   * the deck yields exactly the requested number of questions
+//   * selection is reproducible with a seed and differs without one
+//   * every conditional schema field is REQUIRED — a nullable one made Gemini omit
+//     the correct answer from multiple-choice questions
+//   * malformed questions are dropped with a reason instead of shipped broken
+//   * question ids are unique, because scores are keyed by id
+//   * a 503 falls through to the next model, a 404 skips straight past
+
+import assert from 'node:assert/strict';
+
+import { planQuiz, quizSchema, validateResult, generateQuiz, QUESTION_TYPES } from '../lib/quiz.js';
+import { finalizeSession } from '../lib/normalize.js';
+import { generateJson, GeminiError, parseJsonResponse, resetEnvCache } from '../lib/gemini.js';
+
+let passed = 0;
+const failures = [];
+
+async function check(name, fn) {
+  try {
+    await fn();
+    passed++;
+  } catch (err) {
+    failures.push({ name, message: err.message });
+  }
+}
+
+// ── Fixtures ───────────────────────────────────────────────────────────────
+
+const T0 = Date.UTC(2026, 2, 14, 10, 0);
+const at = (m) => T0 + m * 60_000;
+
+/** Six distinct subjects so the segmenter has plenty to choose from. */
+function multiTopicSession() {
+  const messages = [];
+  const subjects = [
+    ['Pool exhaustion investigation', 'src/pool.ts'],
+    ['Cache staleness after a price update', 'src/cache.ts'],
+    ['Retry helper backoff behaviour', 'src/retry.ts'],
+    ['Auth token refresh rotation', 'src/auth.ts'],
+    ['Migration runner ordering', 'src/migrate.ts'],
+    ['Metrics exporter cardinality', 'src/metrics.ts'],
+  ];
+  subjects.forEach(([subject, file], i) => {
+    messages.push({ role: 'user', text: `${subject}. Explain the cause and fix it in ${file}.`, ts: at(i * 90) });
+    messages.push({
+      role: 'assistant',
+      text: `In ${file} the problem is the error path: it returns before releasing. Wrap it in try/finally. Here is the corrected code:\n\n\`\`\`ts\nexport function ${file.split('/')[1].split('.')[0]}() {\n  try { return acquire(); } finally { release(); }\n}\n\`\`\``,
+      ts: at(i * 90 + 5),
+      thinkingChars: 400,
+      tools: [
+        { name: 'read', input: { path: file } },
+        { name: 'edit', input: { path: file } },
+        { name: 'bash', input: { command: 'npm test' } },
+      ],
+    });
+  });
+  return finalizeSession({
+    harness: 'pi',
+    harnessName: 'pi',
+    nativeId: 'quiz-test',
+    project: 'widget-api',
+    title: 'six subjects',
+    cwd: '/tmp/widget-api',
+    started: at(0),
+    updated: at(subjects.length * 90),
+    messages,
+  });
+}
+
+// ── Planning ───────────────────────────────────────────────────────────────
+
+await check('topic count follows the question count and enabled types', async () => {
+  const s = multiTopicSession();
+  const cases = [
+    { questionCount: 6, types: ['mcq', 'cloze', 'open'], topics: 2 },
+    { questionCount: 6, types: ['mcq'], topics: 6 },
+    { questionCount: 6, types: ['mcq', 'cloze'], topics: 3 },
+    { questionCount: 1, types: ['open'], topics: 1 },
+    { questionCount: 12, types: ['mcq', 'cloze', 'open'], topics: 4 },
+  ];
+  for (const c of cases) {
+    const plan = planQuiz(s, c);
+    assert.equal(plan.selectedTopics.length, c.topics, `${JSON.stringify(c)} -> ${plan.selectedTopics.length} topics`);
+  }
+});
+
+await check('the deck yields exactly the requested number of questions', async () => {
+  const s = multiTopicSession(); // six topics
+  for (const questionCount of [1, 2, 3, 5, 7, 12]) {
+    for (const types of [['mcq'], ['mcq', 'cloze'], QUESTION_TYPES]) {
+      const plan = planQuiz(s, { questionCount, types });
+      const ceiling = plan.selectedTopics.length * types.length;
+      assert.equal(
+        plan.expectedQuestions,
+        Math.min(questionCount, ceiling),
+        `${questionCount} questions over [${types}] produced ${plan.expectedQuestions}`,
+      );
+      assert.equal(plan.deck.length * plan.plan.flashcardsPerTopic, plan.expectedFlashcards);
+      // One question per (topic, type) pair: never the same pair twice.
+      for (const slot of plan.deck) {
+        assert.equal(new Set(slot.types).size, slot.types.length, `duplicate type in ${JSON.stringify(slot)}`);
+      }
+      // When the ask exceeds what the session supports, say so rather than
+      // silently under-delivering or duplicating a pair.
+      if (questionCount > ceiling) {
+        assert.ok(plan.shortfall > 0, `no shortfall reported for ${questionCount} over ${ceiling}`);
+        assert.equal(plan.requestedQuestions, questionCount);
+      } else {
+        assert.equal(plan.shortfall, 0);
+      }
+    }
+  }
+});
+
+await check('a shortfall is reported when the session has too few topics', async () => {
+  const s = multiTopicSession(); // six topics
+  const plan = planQuiz(s, { questionCount: 40, types: ['mcq'] });
+  assert.equal(plan.selectedTopics.length, 6, 'should use every available topic');
+  assert.equal(plan.expectedQuestions, 6, 'one mcq per topic is the ceiling');
+  assert.equal(plan.requestedQuestions, 40);
+  assert.equal(plan.shortfall, 34);
+});
+
+await check('flashcards are always produced, even with no question types', async () => {
+  const plan = planQuiz(multiTopicSession(), { questionCount: 10, types: [] });
+  assert.deepEqual(plan.types, []);
+  assert.equal(plan.questionCount, 0, 'question count must be forced to 0 with no types');
+  assert.equal(plan.expectedQuestions, 0);
+  assert.equal(plan.deck.length, 1, 'a flashcard-only deck still needs one topic');
+  assert.equal(plan.expectedFlashcards, 2, 'and still produces two flashcards');
+});
+
+await check('unknown question types are ignored rather than passed through', async () => {
+  const plan = planQuiz(multiTopicSession(), { questionCount: 4, types: ['mcq', 'essay', 'truefalse'] });
+  assert.deepEqual(plan.types, ['mcq']);
+});
+
+await check('a seed makes topic selection reproducible', async () => {
+  const s = multiTopicSession();
+  // A strict subset, so selection actually has a choice to make. Asking for every
+  // topic would return them all regardless of seed.
+  const a = planQuiz(s, { questionCount: 3, types: ['mcq'], seed: 123 });
+  const b = planQuiz(s, { questionCount: 3, types: ['mcq'], seed: 123 });
+  const c = planQuiz(s, { questionCount: 3, types: ['mcq'], seed: 999 });
+  assert.deepEqual(a.selectedTopics.map((t) => t.id), b.selectedTopics.map((t) => t.id), 'same seed, different topics');
+  // Two different seeds over six topics should not agree by accident.
+  assert.notDeepEqual(a.selectedTopics.map((t) => t.id), c.selectedTopics.map((t) => t.id), 'different seeds, same topics');
+});
+
+await check('selected topics are returned in chronological order', async () => {
+  const plan = planQuiz(multiTopicSession(), { questionCount: 12, types: ['mcq'], seed: 5 });
+  const froms = plan.selectedTopics.map((t) => t.from);
+  assert.deepEqual(froms, [...froms].sort((x, y) => x - y), 'topics are not in chronological order');
+});
+
+await check('planning is offline and does not need a key', async () => {
+  const previous = process.env.GEMINI_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  try {
+    const plan = planQuiz(multiTopicSession(), { questionCount: 3, types: ['mcq'] });
+    assert.ok(plan.deck.length > 0);
+  } finally {
+    if (previous !== undefined) process.env.GEMINI_API_KEY = previous;
+  }
+});
+
+// ── Schema ─────────────────────────────────────────────────────────────────
+
+await check('the schema names only the requested question types', async () => {
+  const schema = quizSchema({ types: ['mcq', 'open'], flashcardsPerTopic: 2 });
+  const enumValues = schema.properties.questions.items.properties.type.enum;
+  assert.deepEqual(enumValues, ['mcq', 'open']);
+});
+
+await check('every conditional field is required', async () => {
+  // This is a regression guard for a real failure: with correctOptionKey nullable
+  // and not required, Gemini returned multiple-choice questions with the answer
+  // missing. The schema cannot express "required only when type is mcq", so all
+  // conditional fields must be required and non-applicable ones become sentinels.
+  const schema = quizSchema({ types: QUESTION_TYPES, flashcardsPerTopic: 2 });
+  const required = new Set(schema.properties.questions.items.required);
+  for (const field of [
+    'options', 'correctOptionKey', 'rubric', 'referenceAnswer',
+    'language', 'codeWithGaps', 'blanks', 'sourceTurns', 'explanation',
+  ]) {
+    assert.ok(required.has(field), `${field} is not required`);
+  }
+  // And nothing may be nullable, which is what let the field be omitted.
+  const walk = (node, path) => {
+    if (!node || typeof node !== 'object') return;
+    assert.notEqual(node.nullable, true, `nullable:true at ${path}`);
+    for (const [k, v] of Object.entries(node)) walk(v, `${path}.${k}`);
+  };
+  walk(schema, 'schema');
+});
+
+// ── Validation ─────────────────────────────────────────────────────────────
+
+const TOPIC = { id: 't1', label: 'pool exhaustion', from: 0, to: 4 };
+
+await check('an mcq without a valid correct answer is dropped, with a reason', async () => {
+  const data = {
+    flashcards: [{ front: 'f', back: 'b', sourceTurns: [1] }],
+    questions: [
+      { type: 'mcq', prompt: 'p', explanation: 'e', sourceTurns: [1], options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }], correctOptionKey: '' },
+      { type: 'mcq', prompt: 'p', explanation: 'e', sourceTurns: [1], options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }], correctOptionKey: 'Z' },
+      { type: 'mcq', prompt: 'p', explanation: 'e', sourceTurns: [1], options: [{ key: 'A', text: 'a' }], correctOptionKey: 'A' },
+    ],
+  };
+  const out = validateResult(data, { topic: TOPIC, types: ['mcq'], turnRange: [0, 4] });
+  assert.equal(out.questions.length, 0, 'invalid mcq survived');
+  assert.equal(out.issues.length, 3, `expected 3 issues, got ${JSON.stringify(out.issues)}`);
+  assert.ok(out.issues.every((i) => /mcq/.test(i)));
+});
+
+await check('a valid mcq survives', async () => {
+  const out = validateResult(
+    {
+      flashcards: [],
+      questions: [{
+        type: 'mcq', prompt: 'why does the pool exhaust?', explanation: 'leak',
+        sourceTurns: [2, 3],
+        options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }, { key: 'C', text: 'c' }, { key: 'D', text: 'd' }],
+        correctOptionKey: 'C',
+      }],
+    },
+    { topic: TOPIC, types: ['mcq'], turnRange: [0, 4] },
+  );
+  assert.equal(out.questions.length, 1);
+  assert.equal(out.questions[0].correctOptionKey, 'C');
+  assert.equal(out.questions[0].id, 't1-mcq-1');
+});
+
+await check('a cloze with no gap, or a gap with no answer, is dropped', async () => {
+  const cases = [
+    { codeWithGaps: 'no gap here', blanks: [{ key: 'blank_1', answer: 'x' }] },
+    { codeWithGaps: 'git rm {{blank_1}} x', blanks: [] },
+    { codeWithGaps: 'git rm {{blank_1}} {{blank_2}} x', blanks: [{ key: 'blank_1', answer: '--cached' }] },
+  ];
+  const out = validateResult(
+    { flashcards: [], questions: cases.map((c) => ({ type: 'cloze', prompt: 'p', explanation: 'e', sourceTurns: [], ...c })) },
+    { topic: TOPIC, types: ['cloze'], turnRange: [0, 4] },
+  );
+  assert.equal(out.questions.length, 0, 'invalid cloze survived');
+  assert.equal(out.issues.length, 3, JSON.stringify(out.issues));
+});
+
+await check('a valid cloze survives with its blanks and alternatives', async () => {
+  const out = validateResult(
+    {
+      flashcards: [],
+      questions: [{
+        type: 'cloze', prompt: 'complete the command', explanation: 'keeps files on disk',
+        sourceTurns: [1],
+        language: 'bash',
+        codeWithGaps: 'git rm -r {{blank_1}} electron-app/node_modules',
+        blanks: [{ key: 'blank_1', answer: '--cached', alternatives: ['--cached'] }],
+      }],
+    },
+    { topic: TOPIC, types: ['cloze'], turnRange: [0, 4] },
+  );
+  assert.equal(out.questions.length, 1);
+  assert.equal(out.questions[0].blanks[0].answer, '--cached');
+});
+
+await check('an open question with no rubric is dropped', async () => {
+  const out = validateResult(
+    { flashcards: [], questions: [{ type: 'open', prompt: 'explain', explanation: 'e', sourceTurns: [], rubric: [] }] },
+    { topic: TOPIC, types: ['open'], turnRange: [0, 4] },
+  );
+  assert.equal(out.questions.length, 0);
+  assert.match(out.issues[0], /rubric/);
+});
+
+await check('a question of a type that was not requested is dropped', async () => {
+  const out = validateResult(
+    { flashcards: [], questions: [{ type: 'open', prompt: 'x', explanation: 'e', sourceTurns: [], rubric: [{ criterion: 'c', weight: 1 }] }] },
+    { topic: TOPIC, types: ['mcq'], turnRange: [0, 4] },
+  );
+  assert.equal(out.questions.length, 0);
+  assert.match(out.issues[0], /not requested/);
+});
+
+await check('ids are minted deterministically and never collide', async () => {
+  const data = {
+    flashcards: [],
+    questions: [
+      { type: 'mcq', prompt: 'a', explanation: 'e', sourceTurns: [], options: [{ key: 'A', text: '1' }, { key: 'B', text: '2' }], correctOptionKey: 'A', id: 'q1' },
+      { type: 'mcq', prompt: 'b', explanation: 'e', sourceTurns: [], options: [{ key: 'A', text: '1' }, { key: 'B', text: '2' }], correctOptionKey: 'B', id: 'q2' },
+      { type: 'open', prompt: 'c', explanation: 'e', sourceTurns: [], rubric: [{ criterion: 'c', weight: 1 }], id: 'q1' },
+    ],
+  };
+  const first = validateResult(data, { topic: TOPIC, types: ['mcq', 'open'], turnRange: [0, 4] });
+  const second = validateResult(data, { topic: TOPIC, types: ['mcq', 'open'], turnRange: [0, 4] });
+
+  const ids = first.questions.map((q) => q.id);
+  assert.equal(new Set(ids).size, ids.length, `duplicate ids: ${ids}`);
+  assert.deepEqual(ids, ['t1-mcq-1', 't1-mcq-2', 't1-open-1']);
+  assert.deepEqual(ids, second.questions.map((q) => q.id), 'ids are not deterministic');
+  // The model's own id is preserved for debugging but never used as the key.
+  assert.equal(first.questions[0].modelId, 'q1');
+});
+
+await check('citations outside the topic turn range are removed', async () => {
+  const out = validateResult(
+    {
+      flashcards: [{ front: 'f', back: 'b', sourceTurns: [0, 2, 99, -1, 'x'] }],
+      questions: [],
+    },
+    { topic: TOPIC, types: [], turnRange: [0, 4] },
+  );
+  assert.deepEqual(out.flashcards[0].sourceTurns, [0, 2]);
+});
+
+await check('flashcards with an empty side are dropped', async () => {
+  const out = validateResult(
+    { flashcards: [{ front: 'f', back: '' }, { front: '  ', back: 'b' }, { front: 'ok', back: 'ok' }], questions: [] },
+    { topic: TOPIC, types: [], turnRange: [0, 4] },
+  );
+  assert.equal(out.flashcards.length, 1);
+});
+
+// ── The Gemini call, with fetch stubbed ────────────────────────────────────
+
+function stubFetch(handler) {
+  const original = globalThis.fetch;
+  globalThis.fetch = handler;
+  return () => {
+    globalThis.fetch = original;
+  };
+}
+
+const VALID_PAYLOAD = {
+  flashcards: [
+    { front: 'what is a pool?', back: 'a set of reusable connections', sourceTurns: [0] },
+    { front: 'what releases a connection?', back: 'a finally block', sourceTurns: [0] },
+  ],
+  questions: [
+    { type: 'mcq', prompt: 'why does it exhaust?', explanation: 'leak', sourceTurns: [0], options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }, { key: 'C', text: 'c' }, { key: 'D', text: 'd' }], correctOptionKey: 'B' },
+    { type: 'cloze', prompt: 'complete', explanation: 'releases', sourceTurns: [0], language: 'ts', codeWithGaps: 'try { a() } finally { {{blank_1}}(); }', blanks: [{ key: 'blank_1', answer: 'release', alternatives: [] }] },
+    { type: 'open', prompt: 'explain the trade-off', explanation: 'because', sourceTurns: [0], rubric: [{ criterion: 'names the leak', weight: 1, mustMention: ['leak'] }], referenceAnswer: 'ref' },
+  ],
+};
+
+function jsonResponse(body, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  };
+}
+
+await check('a 503 on the first model falls through to the next', async () => {
+  const seen = [];
+  const restore = stubFetch(async (url) => {
+    const model = /models\/([^:]+):/.exec(url)?.[1];
+    seen.push(model);
+    if (model === 'model-a') return jsonResponse({ error: { code: 503 } }, 503);
+    return jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify(VALID_PAYLOAD) }] }, finishReason: 'STOP' }] });
+  });
+  try {
+    const result = await generateJson({ prompt: 'x', schema: {}, models: ['model-a', 'model-b'], apiKey: 'k' });
+    assert.equal(result.model, 'model-b');
+    assert.ok(seen.includes('model-a') && seen.includes('model-b'));
+  } finally {
+    restore();
+  }
+});
+
+await check('a 404 skips the model without retrying it', async () => {
+  const seen = [];
+  const restore = stubFetch(async (url) => {
+    const model = /models\/([^:]+):/.exec(url)?.[1];
+    seen.push(model);
+    if (model === 'gone') return jsonResponse({ error: { code: 404 } }, 404);
+    return jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify(VALID_PAYLOAD) }] } }] });
+  });
+  try {
+    await generateJson({ prompt: 'x', schema: {}, models: ['gone', 'alive'], apiKey: 'k' });
+    assert.equal(seen.filter((m) => m === 'gone').length, 1, 'a 404 was retried');
+  } finally {
+    restore();
+  }
+});
+
+await check('every model failing produces a GeminiError, not a crash', async () => {
+  const restore = stubFetch(async () => jsonResponse({ error: { code: 503 } }, 503));
+  try {
+    await assert.rejects(
+      () => generateJson({ prompt: 'x', schema: {}, models: ['a', 'b'], apiKey: 'k' }),
+      (err) => err instanceof GeminiError && err.attempts.length >= 2,
+    );
+  } finally {
+    restore();
+  }
+});
+
+await check('a missing key fails before any request is made', async () => {
+  const previous = process.env.GEMINI_API_KEY;
+  const previousSkip = process.env.GEMINI_SKIP_ENV_FILE;
+  delete process.env.GEMINI_API_KEY;
+  // Two things have to be handled for this to be a real test of the absent-key
+  // path: the .env contents are cached after the first read, and the .env file
+  // itself would otherwise supply the key. So clear the cache AND skip the file.
+  process.env.GEMINI_SKIP_ENV_FILE = '1';
+  resetEnvCache();
+  let called = false;
+  const restore = stubFetch(async () => {
+    called = true;
+    return jsonResponse({});
+  });
+  try {
+    await assert.rejects(
+      () => generateJson({ prompt: 'x', schema: {}, models: ['a'], apiKey: null }),
+      (err) => err instanceof GeminiError && err.kind === 'no-key',
+    );
+    assert.equal(called, false, 'a request was made without a key');
+  } finally {
+    restore();
+    if (previous !== undefined) process.env.GEMINI_API_KEY = previous;
+    if (previousSkip === undefined) delete process.env.GEMINI_SKIP_ENV_FILE;
+    else process.env.GEMINI_SKIP_ENV_FILE = previousSkip;
+    resetEnvCache();
+  }
+});
+
+await check('the API key never appears in an error message', async () => {
+  const SECRET = 'super-secret-key-value';
+  const restore = stubFetch(async () => jsonResponse({ error: { message: 'nope' } }, 400));
+  try {
+    await generateJson({ prompt: 'x', schema: {}, models: ['a'], apiKey: SECRET }).catch((err) => {
+      assert.ok(!String(err.message).includes(SECRET), 'the key leaked into an error message');
+      assert.ok(!JSON.stringify(err.attempts || []).includes(SECRET), 'the key leaked into attempts');
+      assert.ok(!String(err.body || '').includes(SECRET), 'the key leaked into the body');
+    });
+  } finally {
+    restore();
+  }
+});
+
+await check('model text with code fences or prose is still parsed', async () => {
+  assert.deepEqual(parseJsonResponse('```json\n{"a":1}\n```'), { a: 1 });
+  assert.deepEqual(parseJsonResponse('Here you go: {"a":1} — enjoy'), { a: 1 });
+  assert.equal(parseJsonResponse('not json at all'), null);
+});
+
+await check('generateQuiz end to end, with the model stubbed', async () => {
+  const restore = stubFetch(async () =>
+    jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify(VALID_PAYLOAD) }] }, finishReason: 'STOP' }], usageMetadata: { totalTokenCount: 100 } }),
+  );
+  try {
+    const quiz = await generateQuiz(multiTopicSession(), {
+      questionCount: 3,
+      types: ['mcq', 'cloze', 'open'],
+      types_: undefined,
+      apiKey: 'k',
+      models: ['stub'],
+      seed: 1,
+    });
+    assert.equal(quiz.ok, true);
+    assert.equal(quiz.questions.length, 3, 'one question per topic when each type is asked once');
+    assert.equal(new Set(quiz.questions.map((q) => q.id)).size, 3);
+    assert.equal(quiz.flashcards.length, 2);
+    assert.equal(quiz.settings.producedQuestions, 3);
+    assert.equal(quiz.problems.length, 0);
+    assert.ok(quiz.usage.tokens >= 100);
+    for (const q of quiz.questions) {
+      if (q.type === 'mcq') assert.ok(q.options.some((o) => o.key === q.correctOptionKey));
+      if (q.type === 'cloze') assert.ok(/\{\{blank_1\}\}/.test(q.codeWithGaps));
+      if (q.type === 'open') assert.ok(q.rubric.length > 0);
+    }
+  } finally {
+    restore();
+  }
+});
+
+await check('generateQuiz reports a topic failure without losing the others', async () => {
+  let call = 0;
+  const restore = stubFetch(async () => {
+    call++;
+    if (call === 1) return jsonResponse({ error: { code: 400, message: 'bad' } }, 400);
+    return jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify(VALID_PAYLOAD) }] } }] });
+  });
+  try {
+    const quiz = await generateQuiz(multiTopicSession(), {
+      questionCount: 6,
+      types: ['mcq', 'cloze', 'open'],
+      apiKey: 'k',
+      models: ['stub'],
+      seed: 2,
+    });
+    assert.equal(quiz.ok, true, 'one failed topic should not fail the whole quiz');
+    assert.ok(quiz.problems.length >= 1, 'the failure was not reported');
+    assert.ok(quiz.flashcards.length > 0, 'the successful topic was lost');
+  } finally {
+    restore();
+  }
+});
+
+await check('a flashcard-only request makes exactly one call and produces no questions', async () => {
+  let calls = 0;
+  const restore = stubFetch(async () => {
+    calls++;
+    return jsonResponse({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ flashcards: VALID_PAYLOAD.flashcards, questions: [] }) }] } }],
+    });
+  });
+  try {
+    const quiz = await generateQuiz(multiTopicSession(), { questionCount: 9, types: [], apiKey: 'k', models: ['stub'] });
+    assert.equal(calls, 1, `expected 1 call, made ${calls}`);
+    assert.equal(quiz.questions.length, 0);
+    assert.equal(quiz.flashcards.length, 2);
+    assert.equal(quiz.ok, true, 'a flashcard-only quiz is a valid result');
+  } finally {
+    restore();
+  }
+});
+
+// ── Report ─────────────────────────────────────────────────────────────────
+
+console.log(`\nquiz: ${passed} passed, ${failures.length} failed\n`);
+
+if (failures.length) {
+  for (const f of failures) console.error(`FAIL  ${f.name}\n        ${f.message}`);
+  process.exit(1);
+}
+console.log('All quiz assertions passed.\n');

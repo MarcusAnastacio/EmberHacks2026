@@ -33,6 +33,14 @@ export const IPC = {
   TOPICS: 'compat:topics',
   /** renderer -> main, { id, maxChars? }: every topic slice, each capped */
   TOPIC_SLICES: 'compat:topic-slices',
+  /** renderer -> main, { id, questionCount, types, seed? }: plan without calling the model */
+  PLAN_QUIZ: 'compat:plan-quiz',
+  /** renderer -> main, { id, questionCount, types, seed? }: generate a full quiz */
+  GENERATE_QUIZ: 'compat:generate-quiz',
+  /** renderer -> main: whether a Gemini key is configured (never the key itself) */
+  HAS_API_KEY: 'compat:has-api-key',
+  /** main -> renderer: generation progress events */
+  QUIZ_PROGRESS: 'compat:quiz-progress',
   /** main -> renderer: scan progress events */
   PROGRESS: 'compat:progress',
   /** main -> renderer: scan finished */
@@ -69,6 +77,14 @@ export function registerCompatibilityIpc({ ipcMain, layer, getWindows = () => []
     [IPC.DIGEST, (opts) => layer.digest(opts?.id, opts)],
     [IPC.TOPICS, (opts) => layer.topics(opts?.id, opts)],
     [IPC.TOPIC_SLICES, (opts) => layer.topicSlices(opts?.id, opts)],
+    [IPC.PLAN_QUIZ, (opts) => layer.planQuiz(opts?.id, opts)],
+    [IPC.HAS_API_KEY, () => layer.hasApiKey()],
+    // Long-running: progress is streamed on QUIZ_PROGRESS while this resolves.
+    [IPC.GENERATE_QUIZ, (opts) =>
+      layer.generateQuiz(opts?.id, {
+        ...opts,
+        onProgress: (evt) => broadcast(IPC.QUIZ_PROGRESS, evt),
+      })],
     [IPC.PAYLOAD, (opts) => layer.quizPayload(opts?.id, opts)],
     [IPC.SEARCH, (query) => layer.search(query)],
     [IPC.REGISTRY, () => layer.registry().map((h) => ({

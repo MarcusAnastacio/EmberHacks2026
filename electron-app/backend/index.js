@@ -17,6 +17,8 @@ import { scanAll, discoverStores, findSession, toQuizPayload, isQuizReady, loadR
 import { redactPayload } from './lib/redact.js';
 import { buildDigest } from './lib/digest.js';
 import { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
+import { generateQuiz, planQuiz, quizSchema, QUESTION_TYPES } from './lib/quiz.js';
+import { hasApiKey, listModels } from './lib/gemini.js';
 
 export class CompatibilityLayer extends EventEmitter {
   constructor(options = {}) {
@@ -167,6 +169,39 @@ export class CompatibilityLayer extends EventEmitter {
     return topicSlices(session, opts);
   }
 
+  /**
+   * What would be generated, without calling the model: which topics, how many
+   * flashcards, and one question per (topic, enabled type).
+   */
+  planQuiz(id, opts) {
+    const session = this.getSession(id);
+    if (!session) return null;
+    return planQuiz(session, opts);
+  }
+
+  /**
+   * Generate flashcards and quiz questions for one conversation.
+   *
+   * One Gemini call per selected topic, in parallel, each bounded by
+   * `maxCharsPerTopic`. Flashcards are always produced; questions only for the
+   * enabled types.
+   */
+  async generateQuiz(id, opts) {
+    const session = this.getSession(id);
+    if (!session) return null;
+    return generateQuiz(session, opts);
+  }
+
+  /** Whether a Gemini key is available, without revealing it. */
+  hasApiKey(explicit) {
+    return hasApiKey(explicit);
+  }
+
+  /** Which models this key can actually reach. */
+  listModels(opts) {
+    return listModels(opts);
+  }
+
   /** Redaction only, for inspecting what would be stripped. */
   redactionReport(id, opts) {
     const result = this.quizPayload(id, opts);
@@ -204,6 +239,8 @@ export { sqliteAvailable } from './readers/sqlite.js';
 export { redact, redactPayload, patternKinds } from './lib/redact.js';
 export { buildDigest, digestFits, extractTouched, renderTurnRange } from './lib/digest.js';
 export { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
+export { generateQuiz, planQuiz, quizSchema, validateResult, QUESTION_TYPES, DEFAULTS as QUIZ_DEFAULTS } from './lib/quiz.js';
+export { generateJson, listModels, hasApiKey, resolveApiKey, GeminiError, DEFAULT_MODEL_CHAIN } from './lib/gemini.js';
 export {
   renderTree, collectDocs, collectManifests, commitsInWindow, workingTreeState,
 } from './lib/project.js';
