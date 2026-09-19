@@ -27,6 +27,8 @@ export const IPC = {
   SEARCH: 'compat:search',
   /** renderer -> main, no args: every harness we know about, detected or not */
   REGISTRY: 'compat:registry',
+  /** renderer -> main, { id, project?, budget? }: the bounded digest for one session */
+  DIGEST: 'compat:digest',
   /** main -> renderer: scan progress events */
   PROGRESS: 'compat:progress',
   /** main -> renderer: scan finished */
@@ -60,6 +62,7 @@ export function registerCompatibilityIpc({ ipcMain, layer, getWindows = () => []
       return layer.list();
     }],
     [IPC.SESSION, (id) => layer.getSession(id)],
+    [IPC.DIGEST, (opts) => layer.digest(opts?.id, opts)],
     [IPC.PAYLOAD, (opts) => layer.quizPayload(opts?.id, opts)],
     [IPC.SEARCH, (query) => layer.search(query)],
     [IPC.REGISTRY, () => layer.registry().map((h) => ({

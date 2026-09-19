@@ -35,9 +35,9 @@ export function readChatgptExport(raw, ctx) {
       if (m && !m.metadata?.is_visually_hidden_from_conversation) {
         const role = m.author?.role;
         if (role === 'user' || role === 'assistant') {
-          const { text, tools } = contentToParts(m.content?.parts ?? m.content?.text);
+          const { text, tools, thinkingChars } = contentToParts(m.content?.parts ?? m.content?.text);
           if (text || tools?.length) {
-            messages.push(makeMessage({ role, text, ts: toEpochMs(m.create_time), tools }));
+            messages.push(makeMessage({ role, text, thinkingChars, ts: toEpochMs(m.create_time), tools }));
           }
         }
       }
@@ -92,10 +92,10 @@ export function readClaudeWebExport(raw, ctx) {
     }
     const messages = [];
     for (const m of convo.chat_messages || convo.messages || []) {
-      const { text, tools } = contentToParts(m.content ?? m.text);
+      const { text, tools, thinkingChars } = contentToParts(m.content ?? m.text);
       const role = m.sender === 'human' ? 'user' : m.sender === 'assistant' ? 'assistant' : m.role;
       if (!text && !tools?.length) continue;
-      messages.push(makeMessage({ role, text, ts: toEpochMs(m.created_at), tools }));
+      messages.push(makeMessage({ role, text, thinkingChars, ts: toEpochMs(m.created_at), tools }));
     }
     const session = finalizeSession({
       ...ctx,

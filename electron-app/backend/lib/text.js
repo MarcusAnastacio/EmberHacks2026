@@ -48,12 +48,28 @@ export function contentToText(content) {
 }
 
 /**
- * Extract text + tool calls from a content value.
- * Returns { text, tools: [{ name, input }] }.
+ * Compare content-block kinds across agents.
+ *
+ * Every agent spells these differently — pi writes `toolCall`, Anthropic writes
+ * `tool_use`, OpenAI writes `function_call`, Gemini writes `functionCall`. Exact
+ * string matching silently dropped every pi tool call, which cost the tool names
+ * and file paths that the digest's project context is built from. Normalising to
+ * lowercase with separators removed makes the check variant-agnostic.
  */
-export function contentToParts(content) {
+function normKind(kind) {
+  return typeof kind === 'string' ? kind.toLowerCase().replace(/[-_\s]/g, '') : '';
+}
+
+const TOOL_CALL_KINDS = new Set(['tooluse', 'toolcall', 'functioncall', 'toolinvocation']);
+const TOOL_RESULT_KINDS = new Set(['toolresult', 'toolresponse', 'functioncalloutput', 'tooloutput']);
+const THINKING_KINDS = new Set(['thinking', 'redactedthinking', 'reasoning', 'reasoningsummary']);
+const TEXT_KINDS = new Set(['text', 'inputtext', 'outputtext', 'plaintext']);
+const SKIP_KINDS = new Set(['image', 'inputimage', 'document', 'audiospeech', 'inputaudio']);
+
+export function contentToParts(content, { includeThinking = false } = {}) {
   const text = [];
   const tools = [];
+  let thinkingChars = 0;
 
   const walk = (node) => {
     if (node == null) return;
@@ -67,30 +83,50 @@ export function contentToParts(content) {
     }
     if (typeof node !== 'object') return;
 
-    const kind = typeof node.type === 'string' ? node.type : '';
+    const kind = normKind(node.type || node.kind);
 
-    if (kind === 'tool_use' || kind === 'tool_call' || kind === 'function_call') {
+    // Gemini marks reasoning with a flag on a part that otherwise has no `type`
+    // at all (`{ text, thought: true }`). It has to be caught before the kind
+    // dispatch, because an untyped node with a `text` field is otherwise treated
+    // as ordinary text. Checked early for exactly the same reason as the rest of
+    // the reasoning handling: nothing may bypass the exclusion.
+    if (node.thought === true || node.isThought === true) {
+      if (typeof node.text === 'string') {
+        thinkingChars += node.text.length;
+        if (includeThinking) text.push(node.text);
+      }
+      return;
+    }
+
+    if (TOOL_CALL_KINDS.has(kind)) {
       tools.push({
-        name: node.name || node.toolName || node.function?.name || 'tool',
-        input: node.input ?? node.arguments ?? node.function?.arguments ?? null,
+        name: node.name || node.toolName || node.tool_name || node.function?.name || 'tool',
+        input: node.input ?? node.arguments ?? node.args ?? node.function?.arguments ?? null,
       });
       return;
     }
-    if (kind === 'tool_result' || kind === 'tool_response' || kind === 'function_call_output') {
+    if (TOOL_RESULT_KINDS.has(kind)) {
       // Tool output is noise for quiz generation; keep it out of the transcript.
       return;
     }
-    if (kind === 'thinking' || kind === 'redacted_thinking' || kind === 'reasoning') {
-      const t = node.thinking || node.text || node.summary;
-      if (typeof t === 'string' && t) text.push(t);
-      else walk(node.summary);
+    if (THINKING_KINDS.has(kind)) {
+      const t = node.thinking ?? node.text ?? node.summary ?? node.reasoning;
+      let chunk = '';
+      if (typeof t === 'string') chunk = t;
+      else if (t !== undefined) {
+        const acc = [];
+        collectText(t, acc);
+        chunk = acc.join('\n');
+      }
+      thinkingChars += chunk.length;
+      if (includeThinking && chunk) text.push(chunk);
       return;
     }
-    if (kind === 'text' || kind === 'input_text' || kind === 'output_text') {
+    if (TEXT_KINDS.has(kind)) {
       if (typeof node.text === 'string') text.push(node.text);
       return;
     }
-    if (kind === 'image' || kind === 'input_image' || kind === 'document') return;
+    if (SKIP_KINDS.has(kind)) return;
 
     // Un-typed object: descend into the usual containers.
     if (node.content !== undefined) walk(node.content);
@@ -100,7 +136,7 @@ export function contentToParts(content) {
   };
 
   walk(content);
-  return { text: text.join('\n').trim(), tools };
+  return { text: text.join('\n').trim(), tools, thinkingChars };
 }
 
 /** First non-empty line, trimmed and bounded — a display title. */

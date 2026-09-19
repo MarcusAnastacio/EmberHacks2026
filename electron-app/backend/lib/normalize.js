@@ -32,13 +32,16 @@ import { deriveTitle } from './text.js';
  * @property {boolean} [partial]      parsed, but some turns were undecodable
  */
 
-export function makeMessage({ role, text, ts, tools }) {
+export function makeMessage({ role, text, ts, tools, thinkingChars }) {
   const clean = typeof text === 'string' ? text.trim() : '';
   return {
     role: normalizeRole(role),
     text: clean,
     ...(Number.isFinite(ts) && ts > 0 ? { ts } : {}),
     ...(tools && tools.length ? { tools } : {}),
+    // Reasoning is excluded from `text` in contentToParts(); only the size is
+    // carried, so the UI and the digest can say how much was left out.
+    ...(thinkingChars > 0 ? { thinkingChars } : {}),
   };
 }
 
@@ -114,6 +117,12 @@ export function finalizeSession(input) {
 
   const chars = merged.reduce((n, m) => n + m.text.length, 0);
   const userTurns = merged.filter((m) => m.role === 'user').length;
+  // Invocations, not results: this is what the digest reports, because the tool
+  // name and its arguments are the signal and the output body is not.
+  const toolCalls = merged.reduce((n, m) => n + (m.tools?.length || 0), 0);
+  // Reasoning dropped during extraction. Reported so the digest can be honest
+  // about how much of the session it is not showing.
+  const reasoningChars = merged.reduce((n, m) => n + (m.thinkingChars || 0), 0);
 
   const firstUser = merged.find((m) => m.role === 'user');
   const title = input.title || deriveTitle(firstUser?.text) || 'Untitled session';
@@ -135,7 +144,9 @@ export function finalizeSession(input) {
     messages: merged,
     userTurns,
     chars,
-    toolCalls: toolMessages.length,
+    toolCalls,
+    toolResults: toolMessages.length,
+    reasoningChars,
     ...(input.partial ? { partial: true } : {}),
   };
 }

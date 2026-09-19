@@ -120,7 +120,7 @@ function readCursorKeyValue(db) {
         makeMessage({
           // type 1 = user, type 2 = assistant in Cursor's bubble encoding.
           role: bubble.type === 1 ? 'user' : bubble.type === 2 ? 'assistant' : bubble.role,
-          text,
+          text, thinkingChars,
           ts: toEpochMs(bubble.createdAt || bubble.timestamp),
         }),
       );
@@ -164,14 +164,14 @@ function readGenericTable(db) {
     const content = typeof decoded === 'object'
       ? decoded.content ?? decoded.text ?? decoded.message ?? decoded
       : decoded;
-    const { text } = contentToParts(content);
+    const { text, thinkingChars } = contentToParts(content);
     if (!text) continue;
 
     const role = roleCol ? row[roleCol] : decoded?.role;
     const sessionId = idCol ? String(row[idCol]) : 'default';
     if (!bySession.has(sessionId)) bySession.set(sessionId, []);
     bySession.get(sessionId).push(
-      makeMessage({ role, text, ts: toEpochMs(tsCol ? row[tsCol] : undefined) }),
+      makeMessage({ role, text, thinkingChars, ts: toEpochMs(tsCol ? row[tsCol] : undefined) }),
     );
   }
   return bySession;

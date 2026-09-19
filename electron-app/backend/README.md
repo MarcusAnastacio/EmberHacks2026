@@ -167,7 +167,9 @@ in ~1.5 s and needs no native rebuild against Electron.
 | `node:events` — `EventEmitter` | Scan progress events forwarded to the renderer. |
 | global `TextDecoder` (Node ≥ 11) | Decoding BLOB columns out of SQLite rows. |
 | manual JSONL line splitting | One malformed line is counted in `partial` and skipped, instead of losing the whole transcript the way a single `JSON.parse` of the file would. |
-| `node:assert` | The test scripts. No test framework: `npm test` runs two plain scripts that exit non-zero on failure. |
+| `node:child_process` — `execFileSync` | Git inspection in `lib/project.js`. Never a shell, always an argument array, always a 4 s timeout, so a path containing shell metacharacters cannot become a command. |
+| `node:fs` — `readdirSync`, `statSync` | The directory tree and the documentation/manifest allowlist. |
+| `node:assert` | The test scripts. No test framework: `npm test` runs three plain scripts that exit non-zero on failure. |
 
 ### Prior art that made this possible
 
@@ -212,8 +214,12 @@ electron-app/backend/
 │   ├── normalize.js      #   The unified schema. makeMessage, finalizeSession (merge
 │   │                     #     consecutive same-role turns, drop tool bodies, sort,
 │   │                     #     count, title), tolerant toEpochMs, projectFromEncodedDir.
-│   └── redact.js         #   Secret redaction. 29 pattern kinds + an opt-in entropy pass.
-│                         #     Replaces values, keeps structure. See the Redaction section.
+│   ├── redact.js         #   Secret redaction. 29 pattern kinds + an opt-in entropy pass.
+│   │                     #     Replaces values, keeps structure. See the Redaction section.
+│   ├── digest.js         #   The bounded, ordered digest of one conversation plus the
+│   │                     #     project context it touched. See the Digest section.
+│   └── project.js        #   Deterministic, read-only repository inspection: tree, docs,
+│                         #     manifests, git history. Bounded and never reads source.
 │
 ├── readers/              # One file per STORAGE FAMILY, not per agent. 36 agents are
 │   │                     #   covered by 6 readers because forks share a format.
@@ -232,6 +238,14 @@ electron-app/backend/
 │   ├── markdown.js       #   aider's `.aider.chat.history.md`.
 │   └── exports.js        #   Official "Export data" files: ChatGPT conversations.json
 │                         #     (walks the branch tree) and Claude conversations.jsonl.
+│
+├── test/
+│   ├── redact.test.js    #   72 assertions over redact.js. 36 of them assert that benign
+│   │                     #     text is NOT touched — the false positives matter more.
+│   ├── digest.test.js    #   24 assertions over the digest, run against a synthetic
+│   │                     #     project in a temp dir with a real git repo.
+│   └── mock-vscode-chat.js  #  Generates a byte-faithful VS Code chat operation log and
+│                         #     asserts the decoder. Doubles as a reference for the format.
 │
 └── fixtures/             # 33 dirs / 54 files / 584 KB — real sample stores from deja-vu.
     ├── aider/.aider.chat.history.md
@@ -265,6 +279,9 @@ registry.json (36 harnesses, path templates)
       ├─► index.js quizPayload()→ toQuizPayload() trims to a budget
       │                           then lib/redact.js scrubs secrets
       │                           → { payload, redaction }
+      ├─► index.js digest()     → lib/digest.js compresses the conversation and adds
+      │                           lib/project.js context, focused on what it touched
+      │                           → { text, sections, stats }
       └─► ipc.js                → renderer
 ```
 
@@ -284,11 +301,15 @@ Session {
   started, updated,                                // epoch ms
   messages: [{
     role: "user" | "assistant" | "system" | "tool",
-    text,                                          // thinking blocks included
-    ts?, tools?: [{ name, input }]                 // tool *results* dropped as noise
+    text,                                          // answer text only, NOT reasoning
+    ts?, tools?: [{ name, input }],                // tool *results* dropped as noise
+    thinkingChars?                                 // reasoning dropped from this turn
   }],
   userTurns, chars,
-  partial?                                         // parsed, but some turns undecodable
+  toolCalls,        // invocations, from assistant turns
+  toolResults,      // bodies dropped
+  reasoningChars,   // total reasoning dropped from the session
+  partial?          // parsed, but some turns undecodable
 }
 ```
 
@@ -313,6 +334,77 @@ No fixture directory is read during a real scan. Fixture mode is opt-in and labe
 `fixture: true` in every report row.
 
 ---
+
+## The digest
+
+`lib/digest.js` answers "what does a model actually get to see". It exists because raw
+truncation does not work: measured, a flat 24k budget covered **11 of 724 messages** in a
+large session, so nothing about how the work ended was answerable. The digest is the bounded,
+ordered replacement.
+
+```
+                 median session    largest session
+raw chars              64,961          2,471,294
+digest chars           23,781             23,782
+ratio                     2x                104x
+```
+
+**The ordering principle: the conversation is primary and it decides what project material
+is included.** Repository contents are not interesting in themselves — they are interesting
+where they explain what was discussed. So the project half is filtered to what the
+conversation touched: the files named in tool calls, the subtree containing them, the
+README, the manifest, and the commits made during the session window.
+
+Structure of the output:
+
+| Section | Contents |
+|---|---|
+| header | agent, project, span, turn and tool counts, and an honest account of what was omitted |
+| `## Conversation` | one block per turn, `[turn N]` indexed into `session.messages` so generated questions can cite `sourceRefs.messageIndex` |
+| `## Project context` | touched files, git, manifests, README excerpt, structure tree, loose signals |
+
+Per-turn budgets: user turns **verbatim** (4,000 chars — they carry the task), assistant turns
+700 chars, and the **final assistant turn 3,000**, because the closing summary is the most
+quiz-worthy text in a session. Fenced code blocks are kept separately so fill-in-the-blank
+questions have something to work from.
+
+Everything is **deterministic**: no model call, no cost, no hallucination, and stable enough
+to cache and diff. It is also the natural cache key for a generated quiz, because the same
+conversation always produces the same digest.
+
+### What is deliberately never included
+
+| Excluded | Where it is dropped | Why |
+|---|---|---|
+| reasoning / thinking blocks | `lib/text.js` → `contentToParts()` | **47% of all session bytes.** Excluded at parse time rather than in the digest so no future code path can forget. The count is reported as `reasoningChars`. |
+| tool output bodies | `lib/text.js` + `lib/normalize.js` | The bulk of what remains. A quiz should not ask about a directory listing. Only tool *names* and *arguments* survive, which is where the file paths come from. |
+| source file contents | `lib/project.js` | Only documentation and manifests are ever read, from a fixed allowlist. A digest must not become a way to exfiltrate a source tree. |
+
+Together these are why sessions shrank from a 556,396-char median to 64,961.
+
+### Budget rules
+
+Budget is **reserved in priority order under one hard ceiling**, not handed out
+first-come-first-served. This matters: the project section is emitted last, so a naive
+total-budget cut deleted it entirely and the model lost all context about what the project
+was. Order is header → project (capped at half the remainder) → conversation.
+
+The conversation then loses its **middle**, keeping the head (what was asked) and the tail
+(what was concluded and changed) with an explicit marker recording what was dropped.
+
+```
+node cli.js --digest <session-id>            # print the digest
+node cli.js --digest <id> --no-project       # conversation only
+node cli.js --digest <id> --digest-budget 8000
+```
+
+### Safety
+
+`lib/project.js` is the only part of the app that reads files the user did not explicitly
+hand over, so: git is invoked with `execFileSync` and an **argument array, never a shell**,
+with a 4 s timeout, so a path containing shell metacharacters cannot become a command. Every
+directory walk is bounded in depth and entry count, every read is byte-capped, and a
+separate test asserts that building a digest leaves `git status` byte-identical.
 
 ## Redaction
 

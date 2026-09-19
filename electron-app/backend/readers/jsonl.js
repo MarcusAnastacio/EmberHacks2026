@@ -98,10 +98,10 @@ function extractPi(records) {
       continue;
     }
     if (r?.type !== 'message' || !r.message) continue;
-    const { text, tools } = contentToParts(r.message.content);
+    const { text, tools, thinkingChars } = contentToParts(r.message.content);
     if (!text && !tools?.length) continue;
     messages.push(
-      makeMessage({ role: r.message.role, text, ts: toEpochMs(r.timestamp), tools }),
+      makeMessage({ role: r.message.role, text, thinkingChars, ts: toEpochMs(r.timestamp), tools }),
     );
   }
   return { cwd, nativeId, started, messages };
@@ -121,12 +121,12 @@ function extractClaude(records) {
     if (r?.type === 'user' || r?.type === 'assistant' || r?.type === 'system') {
       // Claude uses message.content; Qwen Code and other forks use message.parts.
       const content = r.message?.content ?? r.message?.parts ?? r.content ?? r.parts;
-      const { text, tools } = contentToParts(content);
+      const { text, tools, thinkingChars } = contentToParts(content);
       if (!text && !tools?.length) continue;
       messages.push(
         makeMessage({
           role: r.message?.role || r.type,
-          text,
+          text, thinkingChars,
           ts: toEpochMs(r.timestamp),
           tools,
         }),
@@ -151,16 +151,16 @@ function extractCodexRollout(records) {
     if (r?.type === 'turn_context' && p?.cwd) cwd = p.cwd;
 
     if (p?.type === 'message' && p.role) {
-      const { text, tools } = contentToParts(p.content);
+      const { text, tools, thinkingChars } = contentToParts(p.content);
       if (!text && !tools?.length) continue;
-      messages.push(makeMessage({ role: p.role, text, ts: toEpochMs(r.timestamp), tools }));
+      messages.push(makeMessage({ role: p.role, text, thinkingChars, ts: toEpochMs(r.timestamp), tools }));
       continue;
     }
     // Current Codex build: record type is response_item, role sits in the payload.
     if ((r?.type === 'response_item' || p?.type === 'response_item') && p?.role) {
-      const { text, tools } = contentToParts(p.content);
+      const { text, tools, thinkingChars } = contentToParts(p.content);
       if (!text && !tools?.length) continue;
-      messages.push(makeMessage({ role: p.role, text, ts: toEpochMs(r.timestamp), tools }));
+      messages.push(makeMessage({ role: p.role, text, thinkingChars, ts: toEpochMs(r.timestamp), tools }));
       continue;
     }
     // Codex also logs compact user prompts as their own event.
@@ -196,9 +196,9 @@ function extractAntigravity(records) {
     if (r?.conversation_id || r?.conversationId) nativeId = nativeId || r.conversation_id || r.conversationId;
     const role = pickRole(r?.role, r?.source, r?.type, r?.author);
     if (!role) continue;
-    const { text, tools } = contentToParts(r.content ?? r.text);
+    const { text, tools, thinkingChars } = contentToParts(r.content ?? r.text);
     if (!text && !tools?.length) continue;
-    messages.push(makeMessage({ role, text, ts: toEpochMs(r.created_at || r.timestamp), tools }));
+    messages.push(makeMessage({ role, text, thinkingChars, ts: toEpochMs(r.created_at || r.timestamp), tools }));
   }
   return { cwd, nativeId, messages };
 }
@@ -237,9 +237,9 @@ function extractGeneric(records) {
                     p.message?.content ?? p.message?.parts ?? p.text ?? p.message?.text ?? r.text;
     if (content === undefined) continue;
 
-    const { text, tools } = contentToParts(content);
+    const { text, tools, thinkingChars } = contentToParts(content);
     if (!text && !tools?.length) continue;
-    messages.push(makeMessage({ role, text, ts: toEpochMs(r.timestamp || r.ts || r.created_at || p.timestamp), tools }));
+    messages.push(makeMessage({ role, text, thinkingChars, ts: toEpochMs(r.timestamp || r.ts || r.created_at || p.timestamp), tools }));
   }
   return { cwd, nativeId, messages };
 }
@@ -272,9 +272,9 @@ function extractEventLog(records, sep) {
     // Chunked streams (assistant.message.chunk) would be concatenated elsewhere.
     const content = data?.content ?? data?.message ?? data?.text;
     if (content === undefined) continue;
-    const { text, tools } = contentToParts(content);
+    const { text, tools, thinkingChars } = contentToParts(content);
     if (!text && !tools?.length) continue;
-    messages.push(makeMessage({ role: head, text, ts: toEpochMs(r?.timestamp), tools }));
+    messages.push(makeMessage({ role: head, text, thinkingChars, ts: toEpochMs(r?.timestamp), tools }));
   }
 
   return { cwd, nativeId, title, started, messages };
@@ -306,7 +306,7 @@ function extractGrokAcp(records) {
     const role = kind.startsWith('user') ? 'user' : kind.startsWith('agent') ? 'assistant' : null;
     if (!role) continue;
 
-    const { text } = contentToParts(update.content ?? update.text);
+    const { text, thinkingChars } = contentToParts(update.content ?? update.text);
     if (!text) continue;
 
     if (!current || current.role !== role) {

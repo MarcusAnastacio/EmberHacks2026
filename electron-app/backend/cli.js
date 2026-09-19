@@ -57,6 +57,20 @@ if (flag('--show')) {
   process.exit(0);
 }
 
+if (flag('--digest')) {
+  const d = layer.digest(flag('--digest'), {
+    project: !has('--no-project'),
+    budget: flag('--digest-budget') ? { total: Number(flag('--digest-budget')) } : undefined,
+  });
+  if (!d) {
+    console.error('not found');
+    process.exit(1);
+  }
+  console.log(d.text);
+  console.error(`\n--- digest stats: ${JSON.stringify(d.stats)}\n--- sections: ${JSON.stringify(d.sections)}`);
+  process.exit(0);
+}
+
 if (flag('--payload')) {
   console.log(JSON.stringify(layer.quizPayload(flag('--payload')), null, 2));
   process.exit(0);

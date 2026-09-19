@@ -15,6 +15,7 @@
 import { EventEmitter } from 'node:events';
 import { scanAll, discoverStores, findSession, toQuizPayload, isQuizReady, loadRegistry, QUIZ_MIN_CHARS, QUIZ_MIN_USER_TURNS } from './detect.js';
 import { redactPayload } from './lib/redact.js';
+import { buildDigest } from './lib/digest.js';
 
 export class CompatibilityLayer extends EventEmitter {
   constructor(options = {}) {
@@ -126,6 +127,17 @@ export class CompatibilityLayer extends EventEmitter {
     return { payload, redaction: report };
   }
 
+  /**
+   * The bounded, ordered digest of one conversation plus the project context it
+   * touched. This is the input the topic segmentation and question generation
+   * stages will consume — see docs/quiz-design.md §2.
+   */
+  digest(id, opts) {
+    const session = this.getSession(id);
+    if (!session) return null;
+    return buildDigest(session, opts);
+  }
+
   /** Redaction only, for inspecting what would be stripped. */
   redactionReport(id, opts) {
     const result = this.quizPayload(id, opts);
@@ -161,3 +173,7 @@ export { expandStorePath, globStorePaths } from './lib/expand.js';
 export { readStoreFile } from './readers/index.js';
 export { sqliteAvailable } from './readers/sqlite.js';
 export { redact, redactPayload, patternKinds } from './lib/redact.js';
+export { buildDigest, digestFits, extractTouched } from './lib/digest.js';
+export {
+  renderTree, collectDocs, collectManifests, commitsInWindow, workingTreeState,
+} from './lib/project.js';

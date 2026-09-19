@@ -55,9 +55,9 @@ function readContinue(data, ctx) {
   for (const item of history) {
     const m = item?.message ?? item;
     if (!m) continue;
-    const { text, tools } = contentToParts(m.content ?? m.parts);
+    const { text, tools, thinkingChars } = contentToParts(m.content ?? m.parts);
     if (!text && !tools?.length) continue;
-    messages.push(makeMessage({ role: m.role, text, tools }));
+    messages.push(makeMessage({ role: m.role, text, thinkingChars, tools }));
   }
   return {
     messages,
@@ -73,9 +73,9 @@ function readGemini(data, ctx) {
   const messages = [];
   for (const m of list) {
     const role = m.type === 'gemini' ? 'assistant' : m.type === 'user' ? 'user' : m.role;
-    const { text, tools } = contentToParts(m.content ?? m.parts ?? m.text);
+    const { text, tools, thinkingChars } = contentToParts(m.content ?? m.parts ?? m.text);
     if (!text && !tools?.length) continue;
-    messages.push(makeMessage({ role, text, ts: toEpochMs(m.timestamp), tools }));
+    messages.push(makeMessage({ role, text, thinkingChars, ts: toEpochMs(m.timestamp), tools }));
   }
   return {
     messages,
@@ -90,10 +90,10 @@ function readThread(data, ctx) {
   const list = data.messages || data.thread || data.items || [];
   const messages = [];
   for (const m of list) {
-    const { text, tools } = contentToParts(m.content ?? m.text ?? m.message);
+    const { text, tools, thinkingChars } = contentToParts(m.content ?? m.text ?? m.message);
     const role = m.role || m.author?.role || m.type;
     if (!text && !tools?.length) continue;
-    messages.push(makeMessage({ role, text, ts: toEpochMs(m.timestamp || m.created), tools }));
+    messages.push(makeMessage({ role, text, thinkingChars, ts: toEpochMs(m.timestamp || m.created), tools }));
   }
   return {
     messages,
@@ -108,9 +108,9 @@ function readMessageArray(list) {
   const messages = [];
   for (const m of list) {
     if (!m || typeof m !== 'object') continue;
-    const { text, tools } = contentToParts(m.content ?? m.parts ?? m.text);
+    const { text, tools, thinkingChars } = contentToParts(m.content ?? m.parts ?? m.text);
     if (!text && !tools?.length) continue;
-    messages.push(makeMessage({ role: m.role, text, ts: toEpochMs(m.timestamp || m.ts), tools }));
+    messages.push(makeMessage({ role: m.role, text, thinkingChars, ts: toEpochMs(m.timestamp || m.ts), tools }));
   }
   return { messages };
 }
