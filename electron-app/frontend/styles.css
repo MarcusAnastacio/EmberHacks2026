@@ -414,3 +414,33 @@ body {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Redaction notice in the payload view. Sits above the JSON so the user sees
+   what was stripped before reading what is being sent. */
+.redaction {
+  display: block;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  color: var(--text);
+  background: rgba(126, 224, 184, 0.08);
+  border: 1px solid rgba(126, 224, 184, 0.3);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.redaction strong {
+  color: var(--user);
+}
+
+/* Message index badge: the turn number a quiz cites in sourceRefs. */
+.msg__index {
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.payload__json {
+  white-space: pre-wrap;
+}

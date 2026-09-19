@@ -167,6 +167,7 @@ in ~1.5 s and needs no native rebuild against Electron.
 | `node:events` — `EventEmitter` | Scan progress events forwarded to the renderer. |
 | global `TextDecoder` (Node ≥ 11) | Decoding BLOB columns out of SQLite rows. |
 | manual JSONL line splitting | One malformed line is counted in `partial` and skipped, instead of losing the whole transcript the way a single `JSON.parse` of the file would. |
+| `node:assert` | The test scripts. No test framework: `npm test` runs two plain scripts that exit non-zero on failure. |
 
 ### Prior art that made this possible
 
@@ -208,9 +209,11 @@ electron-app/backend/
 │   ├── text.js           #   Message content extraction. Flattens every content-block
 │   │                     #     dialect (Anthropic, OpenAI, Gemini, pi) to text + tool
 │   │                     #     calls. deriveTitle() for sidebar labels.
-│   └── normalize.js      #   The unified schema. makeMessage, finalizeSession (merge
-│                         #     consecutive same-role turns, sort, count, title),
-│                         #     tolerant toEpochMs, projectFromEncodedDir.
+│   ├── normalize.js      #   The unified schema. makeMessage, finalizeSession (merge
+│   │                     #     consecutive same-role turns, drop tool bodies, sort,
+│   │                     #     count, title), tolerant toEpochMs, projectFromEncodedDir.
+│   └── redact.js         #   Secret redaction. 29 pattern kinds + an opt-in entropy pass.
+│                         #     Replaces values, keeps structure. See the Redaction section.
 │
 ├── readers/              # One file per STORAGE FAMILY, not per agent. 36 agents are
 │   │                     #   covered by 6 readers because forks share a format.
@@ -259,7 +262,9 @@ registry.json (36 harnesses, path templates)
   detect.js: dedupe, sort by recency, cap per harness, mark quizReady
       │
       ├─► index.js list()       → sidebar: harness groups + session summaries
-      ├─► index.js quizPayload()→ trimmed messages, ready for Gemini
+      ├─► index.js quizPayload()→ toQuizPayload() trims to a budget
+      │                           then lib/redact.js scrubs secrets
+      │                           → { payload, redaction }
       └─► ipc.js                → renderer
 ```
 
@@ -309,6 +314,36 @@ No fixture directory is read during a real scan. Fixture mode is opt-in and labe
 
 ---
 
+## Redaction
+
+`lib/redact.js` is the one thing standing between a private transcript and a third-party
+model, and it is called from `quizPayload()` — the single function that produces the object
+sent to Gemini.
+
+Two rules: **replace the value, keep the shape** (`postgres://app:[redacted:password]@db:5432/app` —
+the topology is often the quiz-worthy part), and **never touch something benign**. Agent
+transcripts are full of git SHAs, UUIDs, file paths and type annotations, so over-redaction
+is treated as a bug, not a safe default. 36 of the 72 test assertions assert byte-identical
+output.
+
+| Pass | Default | Catches |
+|---|---|---|
+| patterns | on | 29 kinds: private keys, JWTs, bearer tokens, 19 provider token formats, credentials in URLs, `.env` lines, keyword-labelled values, prose |
+| entropy | **off** | unlabelled random tokens ≥ 32 chars |
+
+Entropy is off because it was measured on real transcripts and produced more false positives
+than true ones — filenames, Next.js build IDs, PDF font names, markdown anchors, host key
+fingerprints and `sk-ssh-ed25519@openssh.com`. All of those are pinned as regression tests.
+Opt in per call with `{ entropy: true }`.
+
+Measured with patterns on: **646 findings across 48 sessions** — 105 credentials in
+connection strings, 194 `.env` lines, 277 keyword-labelled values, 22 JWTs, 10 private key
+blocks, 3 webhook URLs. Residual false positives are confined to docs that literally contain
+pattern examples, `os.environ.get("X")` references, and minified JS.
+
+See [`../docs/quiz-design.md`](../docs/quiz-design.md) §1 for the full rationale and the
+list of false-positive classes.
+
 ## Known limitations
 
 - **Windsurf Cascade is reported but not decoded.** Protobuf with no public schema.
@@ -326,10 +361,12 @@ No fixture directory is read during a real scan. Fixture mode is opt-in and labe
   degrades to a clearly-labelled `partial` placeholder instead of throwing.
 - **Vision input is not extracted.** Images referenced in a transcript are skipped; only
   text and tool names reach the payload.
-- **Secrets are not redacted at this layer.** Transcripts contain API keys, tokens and
-  `.env` contents. **Redaction must happen before anything is sent to Gemini** — deja-vu's
-  regex set (AWS keys, `api_key=`/`token=` assignments, bearer tokens, JWTs, PEM blocks,
-  `scheme://user:pass@host`) is the reference implementation to port.
+- **Tool output is excluded by default.** Measured at 98% of the bytes in a coding session,
+  it is almost never what a quiz should ask about, so `finalizeSession` drops the bodies and
+  keeps a `toolCalls` count. Pass `{ keepToolOutput: true }` to retain them.
+- **Redaction is pattern-based, so it cannot catch everything.** A secret with no recognisable
+  shape and no secret-ish keyword will get through with the entropy pass off. It raises the
+  cost of an accident; it is not a guarantee.
 
 ## A note on the privacy story
 
@@ -337,6 +374,7 @@ This layer reads other tools' private conversation stores. Two deliberate choice
 
 1. **Read-only.** Stores are opened `readOnly`; nothing is written, renamed or deleted.
    SQLite is opened with `{ readOnly: true }` so a concurrent agent cannot be corrupted.
-2. **Local only.** No network calls exist anywhere in this folder. The renderer decides
-   what to send to Gemini, and `toQuizPayload()` is the single, auditable place where a
-   conversation is trimmed and bounded before it leaves the machine.
+2. **Local only.** No network calls exist anywhere in this folder. `quizPayload()` is the
+   single, auditable place where a conversation is trimmed, bounded **and redacted** before
+   it leaves the machine — which is why both live in that one function rather than in the
+   caller.

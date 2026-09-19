@@ -14,6 +14,7 @@
 
 import { EventEmitter } from 'node:events';
 import { scanAll, discoverStores, findSession, toQuizPayload, isQuizReady, loadRegistry, QUIZ_MIN_CHARS, QUIZ_MIN_USER_TURNS } from './detect.js';
+import { redactPayload } from './lib/redact.js';
 
 export class CompatibilityLayer extends EventEmitter {
   constructor(options = {}) {
@@ -110,11 +111,25 @@ export class CompatibilityLayer extends EventEmitter {
     return this.catalog ? findSession(this.catalog, id) : null;
   }
 
-  /** Gemini-ready payload for one conversation. */
+  /**
+   * The exact object to hand to Gemini: the conversation trimmed to a budget AND
+   * secrets removed. This is the single point where a transcript leaves the
+   * machine, which is why redaction lives here and not in the caller.
+   *
+   * @returns {{payload: object, redaction: object}|null}
+   */
   quizPayload(id, opts) {
     const session = this.getSession(id);
     if (!session) return null;
-    return toQuizPayload(session, opts);
+    const raw = toQuizPayload(session, opts);
+    const { payload, report } = redactPayload(raw, { entropy: opts?.entropy === true });
+    return { payload, redaction: report };
+  }
+
+  /** Redaction only, for inspecting what would be stripped. */
+  redactionReport(id, opts) {
+    const result = this.quizPayload(id, opts);
+    return result ? result.redaction : null;
   }
 
   /**
@@ -145,3 +160,4 @@ export {
 export { expandStorePath, globStorePaths } from './lib/expand.js';
 export { readStoreFile } from './readers/index.js';
 export { sqliteAvailable } from './readers/sqlite.js';
+export { redact, redactPayload, patternKinds } from './lib/redact.js';

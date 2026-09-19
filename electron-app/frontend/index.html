@@ -84,6 +84,10 @@
       </main>
     </div>
 
-    <script src="renderer.js"></script>
+    <!-- type="module" is required: renderer.js imports components/ and lib/.
+         This only works because the page is served from app:// rather than
+         file:// — over file:// the origin is null, `script-src 'self'` matches
+         nothing, and the module is refused silently. See main.js. -->
+    <script type="module" src="renderer.js"></script>
   </body>
 </html>
