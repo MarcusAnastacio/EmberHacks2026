@@ -21,6 +21,7 @@ function parseQuiz(text: string, context: LearningContext): Quiz {
 	}
 	for (const question of quiz.questions) {
 		if (!question.question || !Array.isArray(question.choices) || question.choices.length !== 4 || !question.explanation || !question.concept ||
+			!['easy', 'medium', 'hard'].includes(question.difficulty) ||
 			!Number.isInteger(question.answer) || question.answer < 0 || question.answer >= question.choices.length) {
 			throw new Error('Gemini returned an invalid four-choice question. Try generating it again.');
 		}

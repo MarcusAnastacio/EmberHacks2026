@@ -3,6 +3,7 @@ import { AgentChangeContext } from '../analysis/agentChangeContext';
 import { RelevantContextItem } from '../analysis/workspaceContextAnalyzer';
 import type { ContextSelectorOptions } from './contextSelector';
 import { AgentSummary } from './agentSummary';
+import { LearnerProfile } from '../learning/learningHistory';
 
 export interface LearningContext {
 	activeFilePath: string;
@@ -16,5 +17,6 @@ export interface LearningContext {
 	agentChangeInformation?: string;
 	agentChangeContext?: AgentChangeContext;
 	agentSummary?: AgentSummary;
+	learnerProfile?: LearnerProfile;
 	projectDescription?: string;
 }

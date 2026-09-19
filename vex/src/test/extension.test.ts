@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { buildGeminiContext } from '../context/contextSelector';
 import { LearningContext } from '../context/learningContext';
 import { attachAgentSummary, maxAgentSummaryWords } from '../context/agentSummary';
+import { LearningHistoryStore } from '../learning/learningHistory';
 // import * as myExtension from '../../extension';
 
 suite('Extension Test Suite', () => {
@@ -61,5 +62,19 @@ suite('Extension Test Suite', () => {
 			.trim().split(/\s+/).length;
 		assert.ok(wordCount <= maxAgentSummaryWords);
 		assert.ok(!attachAgentSummary(context, undefined).agentSummary);
+	});
+
+	test('Learning history derives a compact missed-concept profile', async () => {
+		const values = new Map<string, unknown>();
+		const state = {
+			get<T>(key: string, defaultValue?: T): T | undefined { return (values.get(key) as T | undefined) ?? defaultValue; },
+			update(key: string, value: unknown): Thenable<void> { values.set(key, value); return Promise.resolve(); },
+			keys(): readonly string[] { return [...values.keys()]; },
+		} as vscode.Memento;
+		const store = new LearningHistoryStore(state);
+		await store.record({ timestamp: new Date().toISOString(), question: 'q1', concept: 'data flow', correct: false, difficulty: 'medium', filePath: 'active.ts' });
+		const profile = await store.record({ timestamp: new Date().toISOString(), question: 'q2', concept: 'data flow', correct: false, difficulty: 'medium', filePath: 'active.ts' });
+		assert.ok(profile.conceptsFrequentlyMissed.includes('data flow'));
+		assert.ok(profile.recentTopics.includes('data flow'));
 	});
 });

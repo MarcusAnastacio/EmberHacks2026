@@ -99,3 +99,9 @@ This does not scrape Copilot's private history or chain-of-thought. If VEX was n
 ## Quiz Code References
 
 Each quiz question may include a validated reference to a file, symbol, and one-based line range from the supplied `LearningContext`. Questions with a reliable reference show **View Code**, which opens the file and selects the referenced range. References that do not exactly match known context files or symbol ranges are discarded, so Gemini cannot invent navigation targets or line numbers.
+
+## Local Learning History
+
+VEX stores quiz attempts locally in VS Code workspace state. Each attempt contains only the question, concept, correctness, difficulty, timestamp, and associated file/project. The store is bounded to the most recent 200 attempts.
+
+Before generating a quiz, VEX derives a compact learner profile containing understood concepts, frequently missed concepts, recent topics, and an approximate difficulty level. Only that profile is included in the Gemini context; the complete learning history is never transmitted. Repeated misses increase the priority of that concept, while consistently correct concepts are eligible for fewer basic questions.

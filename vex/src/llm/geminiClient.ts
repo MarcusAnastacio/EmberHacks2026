@@ -17,6 +17,7 @@ export async function generateText(apiKey: string, prompt: string): Promise<stri
 		generationConfig: {
 			temperature: 0.35,
 			responseMimeType: 'application/json',
+			responseModalities: ['TEXT'],
 		},
 	});
 
@@ -42,13 +43,29 @@ async function listGenerateContentModels(apiKey: string): Promise<string[]> {
 		return parsed.models
 			?.filter(model => model.supportedGenerationMethods?.includes('generateContent'))
 			.map(model => model.name?.replace(/^models\//, ''))
-			.filter((model): model is string => Boolean(model)) ?? [];
+			.filter((model): model is string => Boolean(model))
+			.filter(isTextGenerationModel) ?? [];
 	} catch (error) {
 		if (error instanceof Error && error.message.startsWith('Gemini ')) {
 			throw error;
 		}
 		throw new Error(`Could not reach Gemini: ${error instanceof Error ? error.message : 'network request failed'}`);
 	}
+}
+
+function isTextGenerationModel(model: string): boolean {
+	const specializedSuffixes = [
+		'audio',
+		'computer-use',
+		'embedding',
+		'image',
+		'live',
+		'transcribe',
+		'tts',
+		'veo',
+	];
+	const normalized = model.toLowerCase();
+	return !specializedSuffixes.some(suffix => normalized.includes(suffix));
 }
 
 async function requestWithModel(apiKey: string, body: string, models: string[], modelIndex: number): Promise<string> {

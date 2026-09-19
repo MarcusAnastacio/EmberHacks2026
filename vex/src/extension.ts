@@ -6,16 +6,19 @@ import { QuizViewProvider } from './quizView';
 import { registerAgentSummaryParticipant } from './chat/agentSummaryParticipant';
 import { AgentSummary } from './context/agentSummary';
 import { CodeReference } from './quiz/models';
+import { LearningHistoryStore } from './learning/learningHistory';
 
 const geminiKeySecret = 'vex.geminiApiKey';
 
 export function activate(context: vscode.ExtensionContext): void {
+	const learningHistory = new LearningHistoryStore(context.workspaceState);
 	let quizView: QuizViewProvider;
 	quizView = new QuizViewProvider(
 		context.extensionUri,
-		mode => generateQuizForActiveEditor(context, quizView, mode),
+		mode => generateQuizForActiveEditor(context, learningHistory, quizView, mode),
 		() => setGeminiApiKey(context, quizView),
 		reference => viewCodeReference(reference),
+		message => recordAnswer(context, learningHistory, message),
 	);
 
 	context.subscriptions.push(
@@ -28,7 +31,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('vex.generateQuiz', async () => {
 			await vscode.commands.executeCommand('vex.quizView.focus');
 			quizView.show();
-			await generateQuizForActiveEditor(context, quizView, 'guided');
+			await generateQuizForActiveEditor(context, learningHistory, quizView, 'guided');
 		}),
 		vscode.commands.registerCommand('vex.setGeminiApiKey', () => setGeminiApiKey(context, quizView)),
 	);
@@ -51,6 +54,7 @@ async function setGeminiApiKey(context: vscode.ExtensionContext, quizView: QuizV
 
 async function generateQuizForActiveEditor(
 	context: vscode.ExtensionContext,
+	learningHistory: LearningHistoryStore,
 	quizView: QuizViewProvider,
 	mode: QuizMode,
 ): Promise<void> {
@@ -71,7 +75,8 @@ async function generateQuizForActiveEditor(
 	}
 
 	const agentSummary = context.workspaceState.get<AgentSummary>('vex.agentSummary');
-	const learningContext = await buildLearningContext(editor, agentSummary);
+	const learnerProfile = learningHistory.getProfile();
+	const learningContext = await buildLearningContext(editor, agentSummary, learnerProfile);
 	const sourceName = learningContext.activeFilePath.split(/[\\/]/).pop() ?? 'active editor';
 	quizView.renderStatus('Gemini is building a lesson from your code...');
 	try {
@@ -106,4 +111,24 @@ async function viewCodeReference(reference: CodeReference): Promise<void> {
 		const message = error instanceof Error ? error.message : 'Could not open the referenced code.';
 		void vscode.window.showErrorMessage(`VEX: ${message}`);
 	}
+}
+
+async function recordAnswer(
+	context: vscode.ExtensionContext,
+	learningHistory: LearningHistoryStore,
+	message: { question?: string; concept?: string; correct?: boolean; difficulty?: 'easy' | 'medium' | 'hard' },
+): Promise<void> {
+	const editor = vscode.window.activeTextEditor;
+	if (!message.question || !message.concept || message.correct === undefined || !message.difficulty) {
+		return;
+	}
+	await learningHistory.record({
+		timestamp: new Date().toISOString(),
+		question: message.question,
+		concept: message.concept,
+		correct: message.correct,
+		difficulty: message.difficulty,
+		filePath: editor?.document.uri.fsPath ?? '',
+		project: vscode.workspace.getWorkspaceFolder(editor?.document.uri ?? vscode.Uri.file(''))?.name,
+	});
 }

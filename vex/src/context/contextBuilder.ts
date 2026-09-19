@@ -4,8 +4,9 @@ import { analyzeAgentChanges } from '../analysis/gitChangeAnalyzer';
 import { WorkspaceContextAnalyzer } from '../analysis/workspaceContextAnalyzer';
 import { LearningContext } from './learningContext';
 import { AgentSummary, normalizeAgentSummary } from './agentSummary';
+import { LearnerProfile } from '../learning/learningHistory';
 
-export async function buildLearningContext(editor: vscode.TextEditor, agentSummary?: AgentSummary): Promise<LearningContext> {
+export async function buildLearningContext(editor: vscode.TextEditor, agentSummary?: AgentSummary, learnerProfile?: LearnerProfile): Promise<LearningContext> {
 	const analysis = await analyzeActiveFile(editor);
 	const agentChangeContext = await analyzeAgentChanges(editor.document, analysis.codeSymbols);
 	const configuration = vscode.workspace.getConfiguration('vex.context');
@@ -45,6 +46,7 @@ export async function buildLearningContext(editor: vscode.TextEditor, agentSumma
 		contextBudget,
 		agentChangeContext,
 		...(normalizedAgentSummary ? { agentSummary: normalizedAgentSummary } : {}),
+		...(learnerProfile ? { learnerProfile } : {}),
 		projectDescription: workspaceFolder?.name,
 	};
 }

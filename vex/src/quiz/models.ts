@@ -13,6 +13,7 @@ export interface QuizQuestion {
 	answer: number;
 	explanation: string;
 	concept: string;
+	difficulty: 'easy' | 'medium' | 'hard';
 	hint?: string;
 	reference?: CodeReference;
 }

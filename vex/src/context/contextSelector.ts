@@ -131,6 +131,9 @@ export class ContextSelector {
 		if (context.agentSummary) {
 			appendMetadata('AGENT SUMMARY', formatAgentSummary(context.agentSummary));
 		}
+		if (context.learnerProfile) {
+			appendMetadata('COMPACT LEARNER PROFILE', JSON.stringify(context.learnerProfile));
+		}
 		if (context.projectDescription) {
 			appendMetadata('PROJECT', context.projectDescription);
 		}

@@ -1,10 +1,15 @@
 import * as vscode from 'vscode';
 import { CodeReference, Quiz, QuizMode } from './quiz/models';
+import { QuestionDifficulty } from './learning/learningHistory';
 
 export interface QuizViewMessage {
-	command: 'generate' | 'setKey' | 'viewCode';
+	command: 'generate' | 'setKey' | 'viewCode' | 'answer';
 	mode?: QuizMode;
 	reference?: CodeReference;
+	question?: string;
+	concept?: string;
+	correct?: boolean;
+	difficulty?: QuestionDifficulty;
 }
 
 export class QuizViewProvider implements vscode.WebviewViewProvider {
@@ -16,6 +21,7 @@ export class QuizViewProvider implements vscode.WebviewViewProvider {
 		private readonly onGenerate: (mode: QuizMode) => Promise<void>,
 		private readonly onSetKey: () => Promise<void>,
 		private readonly onViewCode: (reference: CodeReference) => Promise<void>,
+		private readonly onAnswer: (message: QuizViewMessage) => Promise<void>,
 	) {}
 
 	public resolveWebviewView(view: vscode.WebviewView): void {
@@ -31,6 +37,9 @@ export class QuizViewProvider implements vscode.WebviewViewProvider {
 			}
 			if (message.command === 'viewCode' && message.reference) {
 				await this.onViewCode(message.reference);
+			}
+			if (message.command === 'answer' && message.question && message.concept && message.difficulty !== undefined) {
+				await this.onAnswer(message);
 			}
 		});
 	}
@@ -136,8 +145,10 @@ function renderQuiz(data, sourceName) {
 			button.textContent = choice;
 			button.addEventListener('click', () => {
 				section.querySelectorAll('.choice').forEach(element => element.disabled = true);
-				button.classList.add(choiceIndex === item.answer ? 'correct' : 'wrong');
-				if (choiceIndex !== item.answer) section.querySelectorAll('.choice')[item.answer].classList.add('correct');
+				const correct = choiceIndex === item.answer;
+				button.classList.add(correct ? 'correct' : 'wrong');
+				if (!correct) section.querySelectorAll('.choice')[item.answer].classList.add('correct');
+				vscode.postMessage({ command: 'answer', question: item.question, concept: item.concept, correct, difficulty: item.difficulty });
 				section.insertAdjacentHTML('beforeend', '<div class="explanation">' + escapeHtml(item.explanation) + '</div><div class="concept">Concept: ' + escapeHtml(item.concept) + '</div>');
 			});
 			section.appendChild(button);
