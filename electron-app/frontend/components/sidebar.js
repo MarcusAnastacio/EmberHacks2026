@@ -104,7 +104,7 @@ export function renderSidebar(container, { sessions = [], selectedId = null, fil
             title: `${session.title}\n${session.project}\n${session.messageCount} messages`,
             onclick: () => onSelect(session.id),
           },
-          h('span', { class: 'row__title', text: clamp(session.title, 30) }),
+          h('span', { class: 'row__title', text: clamp(session.title, 26) }),
           h(
             'span',
             { class: 'row__meta' },
