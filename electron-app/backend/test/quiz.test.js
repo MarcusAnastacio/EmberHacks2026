@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 
 import {
   planQuiz, quizSchema, validateResult, generateQuiz, quizCapabilities,
-  assessReadiness, quizButtonState, QUESTION_TYPES, READINESS,
+  assessReadiness, quizButtonState, scoreBand, QUESTION_TYPES, READINESS,
 } from '../lib/quiz.js';
 import { finalizeSession } from '../lib/normalize.js';
 import { generateJson, GeminiError, parseJsonResponse, resetEnvCache } from '../lib/gemini.js';
@@ -716,6 +716,42 @@ await check('capabilities expose the question ceiling as numbers, not a helper',
   assert.ok(!JSON.stringify(caps).includes('=>'), 'capabilities must be plain data');
   // And it must survive the clone the renderer side performs.
   assert.doesNotThrow(() => structuredClone(caps));
+});
+
+await check('the score bands divide at the quartiles', async () => {
+  // Four bands, so the boundaries are the interesting part.
+  const cases = [
+    [0, 'unfamiliar'], [24.9, 'unfamiliar'],
+    [25, 'partial'], [49.9, 'partial'],
+    [50, 'solid'], [74.9, 'solid'],
+    [75, 'strong'], [100, 'strong'],
+  ];
+  for (const [pct, expected] of cases) {
+    assert.equal(scoreBand(pct).id, expected, `${pct}% should be ${expected}`);
+  }
+  // Out of range values clamp rather than falling through the switch.
+  assert.equal(scoreBand(-10).id, 'unfamiliar');
+  assert.equal(scoreBand(1000).id, 'strong');
+  assert.equal(scoreBand(undefined).id, 'unfamiliar');
+  assert.equal(scoreBand(NaN).id, 'unfamiliar');
+});
+
+await check('every band is complete and follows the house style', async () => {
+  for (const pct of [0, 30, 60, 90]) {
+    const band = scoreBand(pct);
+    for (const field of ['id', 'label', 'headline', 'line', 'tone']) {
+      assert.ok(band[field], `${band.id} is missing ${field}`);
+    }
+    assert.ok(band.line.length > 40, `${band.id} has no real copy`);
+    // House style, same as the generated content: no em dash, no emoji, no exclamation.
+    for (const field of ['label', 'headline', 'line']) {
+      assert.ok(!/—|–|\.\.\.|!/.test(band[field]), `${band.id}.${field} breaks the house style: ${band[field]}`);
+      assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(band[field]), `${band.id}.${field} contains an emoji`);
+    }
+  }
+  // The tones are distinct, so the UI can colour them differently.
+  const tones = [0, 30, 60, 90].map((p) => scoreBand(p).tone);
+  assert.equal(new Set(tones).size, 4, `tones are not distinct: ${tones}`);
 });
 
 // ── Focus text and the top-right button ────────────────────────────────────

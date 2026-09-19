@@ -125,13 +125,19 @@ CREATE TABLE IF NOT EXISTS attempt (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   quiz_id     TEXT NOT NULL REFERENCES quiz(id) ON DELETE CASCADE,
   started_at  INTEGER NOT NULL,
+  updated_at  INTEGER,
   finished_at INTEGER,
+  step_index  INTEGER NOT NULL DEFAULT 0,
+  finished    INTEGER NOT NULL DEFAULT 0,
   score       REAL,
   max_score   REAL,
   answers     TEXT NOT NULL,
   results     TEXT
 );
-CREATE INDEX IF NOT EXISTS attempt_quiz ON attempt(quiz_id, started_at DESC);
+-- One row per quiz. This is where the user got to, not a history: a retake clears it and
+-- a second finish overwrites the score.
+CREATE UNIQUE INDEX IF NOT EXISTS attempt_one_per_quiz ON attempt(quiz_id);
+CREATE INDEX IF NOT EXISTS attempt_quiz ON attempt(quiz_id);
 
 CREATE TABLE IF NOT EXISTS topic_coverage (
   quiz_id        TEXT NOT NULL REFERENCES quiz(id) ON DELETE CASCADE,
@@ -166,6 +172,39 @@ export class QuizStore {
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec(SCHEMA);
+    this.#migrate();
+  }
+
+  /**
+   * Bring an older database up to the current shape.
+   *
+   * The columns are added when missing, then older rows are collapsed so the unique
+   * index can be created. Without this, an existing install would throw on first use.
+   */
+  #migrate() {
+    const columns = this.db.prepare('PRAGMA table_info(attempt)').all().map((c) => c.name);
+    if (!columns.includes('step_index')) {
+      this.db.exec('ALTER TABLE attempt ADD COLUMN step_index INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!columns.includes('finished')) {
+      this.db.exec('ALTER TABLE attempt ADD COLUMN finished INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!columns.includes('updated_at')) {
+      this.db.exec('ALTER TABLE attempt ADD COLUMN updated_at INTEGER');
+    }
+    // Collapse any per-quiz history down to the most recent row.
+    try {
+      this.db.exec(`
+        DELETE FROM attempt WHERE id NOT IN (
+          SELECT id FROM attempt a WHERE a.updated_at = (
+            SELECT MAX(COALESCE(b.updated_at, b.started_at)) FROM attempt b WHERE b.quiz_id = a.quiz_id
+          ) GROUP BY a.quiz_id
+        )`);
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS attempt_one_per_quiz ON attempt(quiz_id)');
+    } catch {
+      // A duplicate that survives collapsing is not worth failing startup over; the
+      // upsert below tolerates it by looking the row up first.
+    }
   }
 
   /** An in-memory store, for tests. */
@@ -282,7 +321,17 @@ export class QuizStore {
         questionCount: quiz.questions.length,
         flashcardCount: quiz.flashcards.length,
         types: [...new Set(quiz.questions.map((q) => q.type))],
-        attempts: this.attempts(quiz.id).length,
+        progress: (() => {
+          const row = this.db.prepare('SELECT step_index, finished, score, max_score, answers FROM attempt WHERE quiz_id = ?').get(quiz.id);
+          if (!row) return null;
+          return {
+            stepIndex: row.step_index,
+            completed: Boolean(row.finished),
+            resumable: Object.keys(JSON.parse(row.answers || '{}')).length > 0,
+            score: row.score,
+            maxScore: row.max_score,
+          };
+        })(),
       };
     });
   }
@@ -322,47 +371,105 @@ export class QuizStore {
     return { state: 'fresh', ...fact };
   }
 
-  saveAttempt(quizId, { answers, score, maxScore, results, startedAt, finishedAt } = {}) {
+  /**
+   * Store where the user got to. One row per quiz, upserted on every answer.
+   *
+   * `answers` and `results` are kept as they are produced, so returning to a quiz does
+   * not re-grade anything. That matters for open questions, where grading costs a model
+   * call: a resumed quiz shows the stored verdict instead of paying for it twice.
+   */
+  saveProgress(quizId, { stepIndex = 0, answers = {}, results = null } = {}) {
     if (!this.getQuiz(quizId)) throw new QuizStoreError(`no quiz ${quizId}`);
-    const info = this.db
+    const now = Date.now();
+    const existing = this.db.prepare('SELECT id FROM attempt WHERE quiz_id = ?').get(quizId);
+
+    if (existing) {
+      this.db
+        .prepare('UPDATE attempt SET step_index=?, answers=?, results=?, updated_at=? WHERE id=?')
+        .run(stepIndex, JSON.stringify(answers || {}), JSON.stringify(results || null), now, existing.id);
+      return { quizId, stepIndex, created: false };
+    }
+
+    this.db
       .prepare(
-        `INSERT INTO attempt (quiz_id, started_at, finished_at, score, max_score, answers, results)
-         VALUES (?,?,?,?,?,?,?)`,
+        `INSERT INTO attempt (quiz_id, started_at, updated_at, step_index, finished, score, max_score, answers, results)
+         VALUES (?,?,?,?,0,NULL,NULL,?,?)`,
       )
-      .run(
-        quizId,
-        startedAt ?? Date.now(),
-        finishedAt ?? Date.now(),
-        score ?? null,
-        maxScore ?? null,
-        JSON.stringify(answers || {}),
-        JSON.stringify(results || null),
-      );
-    return Number(info.lastInsertRowid);
+      .run(quizId, now, now, stepIndex, JSON.stringify(answers || {}), JSON.stringify(results || null));
+    return { quizId, stepIndex, created: true };
   }
 
-  attempts(quizId) {
-    return this.db
-      .prepare('SELECT * FROM attempt WHERE quiz_id = ? ORDER BY started_at DESC')
-      .all(quizId)
-      .map((row) => ({
-        id: row.id,
-        quizId: row.quiz_id,
-        startedAt: row.started_at,
-        finishedAt: row.finished_at,
-        score: row.score,
-        maxScore: row.max_score,
-        answers: JSON.parse(row.answers || '{}'),
-        results: row.results ? JSON.parse(row.results) : null,
-      }));
+  /**
+   * The quiz was completed.
+   *
+   * The score is kept and the POSITION IS RESET, so coming back offers a fresh attempt
+   * rather than dropping the user on a results screen they have already read. A later
+   * completion overwrites the score, which is what was asked for: one end score per quiz,
+   * the most recent one.
+   */
+  finishAttempt(quizId, { score = null, maxScore = null } = {}) {
+    if (!this.getQuiz(quizId)) throw new QuizStoreError(`no quiz ${quizId}`);
+    const now = Date.now();
+    const existing = this.db.prepare('SELECT id FROM attempt WHERE quiz_id = ?').get(quizId);
+
+    if (existing) {
+      this.db
+        .prepare('UPDATE attempt SET step_index=0, finished=1, score=?, max_score=?, answers=?, results=NULL, updated_at=?, finished_at=? WHERE id=?')
+        .run(score, maxScore, JSON.stringify({}), now, now, existing.id);
+      return { quizId, score, maxScore, updated: true };
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO attempt (quiz_id, started_at, updated_at, finished_at, step_index, finished, score, max_score, answers, results)
+         VALUES (?,?,?,?,0,1,?,?,?,NULL)`,
+      )
+      .run(quizId, now, now, now, score, maxScore, JSON.stringify({}));
+    return { quizId, score, maxScore, updated: false };
   }
 
-  /** Best score across attempts, for a progress view. */
-  bestScore(quizId) {
-    const row = this.db
-      .prepare('SELECT MAX(score) AS best, MAX(max_score) AS maxScore, COUNT(*) AS n FROM attempt WHERE quiz_id = ?')
-      .get(quizId);
-    return { best: row?.best ?? null, maxScore: row?.maxScore ?? null, attempts: row?.n ?? 0 };
+  /**
+   * Retake: forget the position so the quiz starts at the first step.
+   *
+   * The previous score is left in place. It is only a display value until the next
+   * completion replaces it, and clearing it would blank the score on the way out of the
+   * results screen for no gain.
+   */
+  clearProgress(quizId) {
+    const existing = this.db.prepare('SELECT id FROM attempt WHERE quiz_id = ?').get(quizId);
+    if (!existing) return false;
+    this.db
+      .prepare('UPDATE attempt SET step_index=0, answers=?, results=NULL, updated_at=? WHERE id=?')
+      .run(JSON.stringify({}), Date.now(), existing.id);
+    return true;
+  }
+
+  /**
+   * The stored position and last score for a quiz, or null when it was never started.
+   *
+   * `answers` empty means there is nothing to resume, so the caller should start at the
+   * first step whether or not a previous run was finished.
+   */
+  getProgress(quizId) {
+    const row = this.db.prepare('SELECT * FROM attempt WHERE quiz_id = ?').get(quizId);
+    if (!row) return null;
+    const answers = JSON.parse(row.answers || '{}');
+    return {
+      quizId: row.quiz_id,
+      stepIndex: row.step_index,
+      answers,
+      results: row.results ? JSON.parse(row.results) : null,
+      /** True when nothing is answered, so the caller should begin at the first step. */
+      resumable: Object.keys(answers).length > 0,
+      /** True when a run has been completed at least once. */
+      completed: Boolean(row.finished),
+      score: row.score,
+      maxScore: row.max_score,
+      percentage: row.max_score > 0 ? +((row.score / row.max_score) * 100).toFixed(1) : 0,
+      startedAt: row.started_at,
+      updatedAt: row.updated_at || row.started_at,
+      finishedAt: row.finished_at,
+    };
   }
 
   deleteQuiz(id) {

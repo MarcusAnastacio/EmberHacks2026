@@ -33,10 +33,13 @@ const CH = {
   QUIZ_FOR_SESSION: 'compat:quiz-for-session',
   LIST_QUIZZES: 'compat:list-quizzes',
   GRADE_QUIZ: 'compat:grade-quiz',
-  ATTEMPTS: 'compat:attempts',
+  QUIZ_PROGRESS_STATE: 'compat:quiz-progress',
+  SAVE_QUIZ_PROGRESS: 'compat:save-quiz-progress',
+  FINISH_QUIZ: 'compat:finish-quiz',
+  RESTART_QUIZ: 'compat:restart-quiz',
   CLEAR_QUIZZES: 'compat:clear-quizzes',
   STORE_INFO: 'compat:store-info',
-  HAS_API_KEY: 'compat:has-api-key',
+  SCORE_BAND: 'compat:score-band',
 };
 
 /** Keep a handle on each subscription so listeners can be removed again. */
@@ -80,10 +83,13 @@ contextBridge.exposeInMainWorld('compat', {
   quizForSession: (o) => ipcRenderer.invoke(CH.QUIZ_FOR_SESSION, o),
   listQuizzes: (o) => ipcRenderer.invoke(CH.LIST_QUIZZES, o),
   gradeQuiz: (o) => ipcRenderer.invoke(CH.GRADE_QUIZ, o),
-  attempts: (o) => ipcRenderer.invoke(CH.ATTEMPTS, o),
+  quizProgress: (o) => ipcRenderer.invoke(CH.QUIZ_PROGRESS_STATE, o),
+  saveQuizProgress: (o) => ipcRenderer.invoke(CH.SAVE_QUIZ_PROGRESS, o),
+  finishQuiz: (o) => ipcRenderer.invoke(CH.FINISH_QUIZ, o),
+  restartQuiz: (o) => ipcRenderer.invoke(CH.RESTART_QUIZ, o),
   clearQuizzes: () => ipcRenderer.invoke(CH.CLEAR_QUIZZES),
   storeInfo: () => ipcRenderer.invoke(CH.STORE_INFO),
-  hasApiKey: () => ipcRenderer.invoke(CH.HAS_API_KEY),
+  scoreBand: (o) => ipcRenderer.invoke(CH.SCORE_BAND, o),
 
   // events
   onProgress: (cb) => subscribe(CH.PROGRESS, cb),

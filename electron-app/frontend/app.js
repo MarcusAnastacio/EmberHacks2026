@@ -134,16 +134,65 @@ async function selectSession(id) {
 
     // Readiness and the plan are cheap and offline, so the UI can tell the user what is
     // possible before they spend anything.
-    const [readiness, plan, staleness] = await Promise.all([
+    const [readiness, plan, staleness, button] = await Promise.all([
       api.readiness({ id, types: store.state.options.types }),
       api.planQuiz({ id, ...store.state.options }),
       api.staleness({ id, ...store.state.options }),
+      api.quizButton({ id, ...store.state.options }),
     ]);
-    store.set({ readiness, plan, staleness });
+    store.set({ readiness, plan, staleness, button });
+
+    // Restore the quiz the user was partway through, if this conversation has one. The
+    // backend decides whether there is a position to restore; the frontend only obeys.
+    await restoreQuizFor(id);
     render();
   } catch (err) {
     store.set({ notice: { level: 'error', text: String(err?.message || err) } });
   }
+}
+
+/**
+ * Put the user back where they were in this conversation's quiz, or clear the quiz view.
+ *
+ * A quiz that was finished has no position saved, so this lands on the first step with
+ * the previous score available for display. That is the intended behaviour: a completed
+ * quiz offers a fresh attempt rather than a results screen already read.
+ */
+async function restoreQuizFor(sessionId) {
+  const stored = await api.quizForSession({ id: sessionId });
+  if (!stored) {
+    steps = [];
+    stepIndex = 0;
+    responses = {};
+    store.set({ quiz: null, stage: 'idle', attempt: null, lastScore: null });
+    return;
+  }
+
+  const progress = await api.progress({ quizId: stored.id });
+  steps = toSteps(stored);
+  responses = {};
+
+  if (progress?.resumable) {
+    // Rebuild the per-step results from what was stored, so a resumed open question
+    // shows its verdict instead of asking the model again.
+    for (const [questionId, raw] of Object.entries(progress.results || {})) {
+      const step = steps.find((s) => s.id === questionId);
+      if (step) responses[questionId] = { result: describeResult(step, raw) };
+    }
+    for (const [questionId, answer] of Object.entries(progress.answers || {})) {
+      responses[questionId] = { ...(responses[questionId] || {}), answer };
+    }
+    stepIndex = Math.min(progress.stepIndex ?? 0, Math.max(0, steps.length - 1));
+  } else {
+    stepIndex = 0;
+  }
+
+  store.set({
+    quiz: stored,
+    stage: 'quiz',
+    attempt: null,
+    lastScore: progress?.completed ? { score: progress.score, maxScore: progress.maxScore, percentage: progress.percentage } : null,
+  });
 }
 
 async function updateOptions(options) {
@@ -186,13 +235,40 @@ async function generate({ extend = false } = {}) {
   }
 }
 
+async function finishQuiz() {
+  const s = store.state;
+  const summary = summarize(s.attempt, { band: null });
+  const quizId = s.quiz?.stored?.id || s.quiz?.id;
+  const band = await api.band({ percentage: summary.percentage });
+  if (quizId) {
+    try {
+      // Keeps the score and clears the position, so the next visit starts fresh.
+      await api.finish({ quizId, score: summary.score, maxScore: summary.total });
+    } catch (err) {
+      store.set({ notice: { level: 'warn', text: `Could not save your score: ${String(err?.message || err)}` } });
+    }
+  }
+  store.set({ band, lastScore: { score: summary.score, maxScore: summary.total, percentage: summary.percentage } });
+  renderCurrentStep();
+}
+
+async function retake() {
+  const s = store.state;
+  const quizId = s.quiz?.stored?.id || s.quiz?.id;
+  if (quizId) await api.restart({ quizId }).catch(() => {});
+  stepIndex = 0;
+  responses = {};
+  store.set({ attempt: null, band: null });
+  renderCurrentStep();
+}
+
 function renderCurrentStep() {
   const s = store.state;
   if (s.stage !== 'quiz') return;
   const step = steps[stepIndex];
 
   if (!step) {
-    const summary = summarize(s.attempt, steps);
+    const summary = summarize(s.attempt, { band: s.band });
     el.quizKicker.textContent = 'QUIZ COMPLETE';
     el.quizTitle.textContent = s.quiz?.title || 'Your quiz';
     el.quizDescription.textContent = '';
@@ -200,7 +276,7 @@ function renderCurrentStep() {
       summary,
       attempt: s.attempt,
       onBack: () => { store.set({ stage: 'idle' }); render(); },
-      onRetry: () => { stepIndex = 0; responses = {}; store.set({ attempt: null }); renderCurrentStep(); },
+      onRetry: retake,
     });
     return;
   }
@@ -215,7 +291,11 @@ function renderCurrentStep() {
     step,
     result: responses[step.id]?.result || null,
     isLast: stepIndex === steps.length - 1,
-    onNext: () => { stepIndex += 1; renderCurrentStep(); },
+    onNext: () => {
+      stepIndex += 1;
+      if (stepIndex >= steps.length) finishQuiz();
+      else renderCurrentStep();
+    },
     onRespond: (answer) => respond(step, answer),
   });
 }
@@ -235,10 +315,35 @@ async function respond(step, answer) {
     responses[step.id] = { answer, result: forThisStep ? describeResult(step, forThisStep) : null, raw: forThisStep };
     if (stepIndex === steps.length - 1) store.set({ attempt: result });
     else store.set({});
+    await persistProgress();
   } catch (err) {
     responses[step.id] = { answer, result: { status: 'error', headline: 'Could not be graded', detail: String(err?.message || err) } };
   }
   renderCurrentStep();
+}
+
+/** The raw results, keyed by question id, for the store. */
+function rawResults() {
+  const out = {};
+  for (const [id, entry] of Object.entries(responses)) {
+    if (entry?.raw) out[id] = entry.raw;
+  }
+  return out;
+}
+
+/**
+ * Save the position. Called after every answer so switching conversations, or quitting,
+ * costs nothing. Only the last completed step is stored, which is the one to resume on.
+ */
+async function persistProgress() {
+  const s = store.state;
+  const quizId = s.quiz?.stored?.id || s.quiz?.id;
+  if (!quizId) return;
+  try {
+    await api.saveProgress({ quizId, stepIndex, answers: allAnswers(), results: rawResults() });
+  } catch (err) {
+    store.set({ notice: { level: 'warn', text: `Could not save your place: ${String(err?.message || err)}` } });
+  }
 }
 
 function allAnswers() {

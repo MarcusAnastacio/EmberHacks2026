@@ -701,3 +701,26 @@ body {
 /* Results */
 .result-card__actions { display: flex; gap: 8px; margin-top: 12px; }
 .result-card__meta { margin: 6px 0 0; color: var(--text-faint); font-size: 11px; }
+
+/* ── Results card ────────────────────────────────────────────────────────────
+   Tone comes from the band the backend chose, so the four thresholds drive the
+   colour without the markup knowing anything about them. Green and red stay
+   reserved for grading a single answer, so the bands use other hues. */
+.result-card { text-align: center; }
+.result-card__score {
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+}
+.result-card__percent {
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.result-card--low .result-card__score { color: #e0a0a0; }
+.result-card--mid .result-card__score { color: #e0c07a; }
+.result-card--good .result-card__score { color: #8fb8ff; }
+.result-card--high .result-card__score { color: #9ad6c0; }
+.result-card h3 { color: var(--text); }

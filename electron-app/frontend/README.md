@@ -1,11 +1,9 @@
-# Renderer (frontend)
+# VEX frontend
 
-The UI. Plain HTML, CSS and browser JavaScript — **no framework, no bundler, no build
-step**. Edit a file, reload the window.
+The renderer. Plain HTML, CSS and ES modules. No framework, no bundler, no build step.
 
-This README is about running the UI and where the quiz view plugs in. For the app shell and
-setup, see [`../README.md`](../README.md). For what the sidebar's data actually is, see
-[`../backend/README.md`](../backend/README.md).
+The visual design is not final. This file explains the seam that keeps that cheap: the
+functional layer is done, and restyling should not touch it.
 
 ---
 
@@ -17,158 +15,131 @@ npm install      # once
 npm start
 ```
 
-A save is not hot-reloaded — press **Ctrl/Cmd + R** in the window, or relaunch. To keep
-DevTools open while you iterate:
+Save does not hot reload. Press **Ctrl/Cmd + R** in the window, or relaunch.
 
 ```bash
-COMPAT_DEVTOOLS=1 npm start
+COMPAT_DEVTOOLS=1 npm start        # DevTools open
+npm run start:fixtures             # bundled sample stores instead of your history
+COMPAT_SCREENSHOT=/tmp/app.png npm start   # render to a PNG and exit
+npm test --prefix frontend         # the contract test (see below)
 ```
-
-To see a populated sidebar without installing any AI agents, launch against the bundled
-sample stores:
-
-```bash
-npm run start:fixtures
-# or click "Demo data" in the running app
-```
-
-To check the UI without a display (renders the window to a PNG and exits):
-
-```bash
-COMPAT_SCREENSHOT=/tmp/app.png npm start
-COMPAT_SCREENSHOT=/tmp/app.png COMPAT_SCREENSHOT_DELAY=6000 npm start   # wait longer
-```
-
-There is no lint or test command for the renderer. `npm test` at the app root runs the
-backend parser tests.
 
 ---
 
-## Files
+## Layout
 
-| File | Responsibility |
-|---|---|
-| `index.html` | Structure and the CSP. Two panes: `.sidebar` and `.main`. |
-| `styles.css` | All styling. Design tokens are CSS custom properties in `:root` at the top. |
-| `renderer.js` | All logic. Fetches the catalog, renders the list, handles selection. |
+```
+frontend/
+├── index.html          markup and the CSP
+├── styles.css          all styling, design tokens in :root at the top
+├── fonts/              Nunito, bundled. See Type below.
+├── app.js              WIRING: reads state, calls the API, tells components what to draw
+├── lib/                FUNCTIONAL. Finalised. Restyling should not need to touch it.
+│   ├── api.js            the only file that talks to the backend
+│   ├── state.js          application state, with named setters
+│   └── quiz-view.js      backend shapes into render-agnostic view models
+└── components/         VISUAL. Expected to change.
+    ├── sidebar.js        the conversation list
+    ├── panel.js          empty state, transcript, settings, payload
+    └── quiz.js           flashcards, the three question types, feedback, results
+```
 
-Everything is one flat script with no modules, so `renderer.js` runs in the page scope and
-talks to the main process only through `window.compat`. It is split into four commented
-sections: **Sidebar**, **Main panel**, **Actions**, **Boot**.
+The rules that keep the seam intact:
+
+- **`lib/api.js` is the only file that talks to the backend.** No component calls the
+  bridge, no component knows a channel name.
+- **`lib/quiz-view.js` is the only file that reshapes a response.** It turns a quiz into a
+  flat list of steps, so no component ever reads `correctOptionKey` or `codeWithGaps`.
+- **Components draw a view model and report intent through a callback.** They never fetch,
+  never hold state, and never decide what to generate.
+- **`app.js` owns state.** It is the only writer.
+
+So: restyling touches `components/` and `styles.css`. A backend change touches
+`lib/api.js`. Neither should need the other.
 
 ---
 
-## The only API the UI has
+## Type
 
-`window.compat` is injected by `../preload.js`. Nothing else is available — no `require`,
-no `fs`, no file paths.
+Nunito, **bundled rather than linked**, in `fonts/` as two variable woff2 files (latin and
+latin-ext, about 75 KB total, one file covering weights 200 to 1000).
+
+This is not a preference. The renderer makes no network requests and the CSP is
+`default-src 'none'`, so a Google Fonts `<link>` fails silently: the app looks fine and
+quietly renders in a system font. `font-src 'self'` is in the CSP for the same reason, and
+removing it has the same invisible failure mode.
+
+The fallback stack includes `ui-rounded` and `SF Pro Rounded`, so a machine that somehow
+lacks the file still gets a rounded face where the OS has one.
+
+Nunito is under the SIL Open Font License. The licence is committed at `fonts/OFL.txt`.
+Swapping it means replacing the two `.woff2` files and the `@font-face` block.
+
+---
+
+## What the backend gives you
+
+Everything below is reachable through `lib/api.js`. The full contract is in
+[`../backend/README.md`](../backend/README.md).
+
+The flow the app is built around:
 
 ```js
-// Commands (all return promises)
-compat.list(options?)             // sidebar catalog: detected agents grouped with sessions
-compat.refresh(options?)          // rescan. { fixtures: true } uses bundled sample stores
-compat.session(id)                // one conversation, WITH message bodies
-compat.payload({ id, maxChars })  // bounded, trimmed JSON for Gemini
-compat.generate({ id, prompt })    // generate a validated quiz in the main process
-compat.search(query)              // flat, body-less list for a search box
-compat.registry()                 // every agent we know about, detected or not
-
-// Events (return an unsubscribe function)
-compat.onProgress(evt => {})      // { phase, harness, name, sessions?, files? }
-compat.onReady(evt => {})         // { scannedAt, sessions }
+const catalog = await api.refresh()                    // sidebar
+const session = await api.session(id)                  // the conversation
+const button  = await api.quizButton({ id, ...opts })   // { action, label, reason }
+const quiz    = await api.generateAndSave({ id, ...opts })   // persists
+const graded  = await api.grade({ quizId, answers })   // mcq and cloze cost nothing
+const band    = await api.band({ percentage })         // quartile copy
 ```
 
-`list()` vs `session(id)` is the important distinction: `list()` returns **summaries only**
-(title, project, counts, timestamps) so it is cheap enough to hold in memory and send
-whole. Message bodies arrive only when you ask for one conversation.
+Two things worth knowing:
 
-### Shapes
-
-```js
-// from list() -> catalog.groups[].sessions[]
-{
-  id: "claude:9f31c0a9-...",   // pass this to session() and payload()
-  nativeId, title, project,
-  updated, started,            // epoch ms
-  messageCount, userTurns, chars,
-  quizReady: true,             // >= 2 user turns and >= 400 chars
-  partial: false,              // parsed, but some turns were undecodable
-  source: "file" | "sqlite" | "vscode"
-}
-
-// from session(id)
-{
-  ...the above, plus:
-  messages: [
-    { role: "user" | "assistant" | "system" | "tool",
-      text: "...",
-      ts: 1779938213302,               // may be absent
-      tools: [{ name: "Bash", input: {...} }] }   // may be absent
-  ]
-}
-
-// progress events during a scan
-{ phase: "harness-start" | "harness-done", harness: "claude", name: "Claude Code",
-  sessions: 47, files: 47 }
-```
-
-`catalog.absent` lists the agents that were searched for and **not** found — useful for a
-"why isn't my tool here?" affordance.
+- **`quizButton` decides the label for you.** `action: 'open'` means a stored quiz is
+  ready; `action: 'configure'` means offer generation. The mapping from the six staleness
+  states lives in the backend so the UI does not branch on them.
+- **Progress is saved after every answer.** `api.progress({ quizId })` returns
+  `{ stepIndex, answers, results, resumable, completed, score, maxScore }`. Finishing
+  keeps the score and resets the position, so returning offers a fresh attempt. A second
+  completion overwrites the score rather than accumulating attempts.
 
 ---
 
-## Current UI
+## The contract test
 
-The window is a two-pane split. Everything left of the seam is real; the right pane is a
-placeholder for the quiz.
-
-```
-┌── sidebar (320px, resizable via --sidebar-w) ──┬── .main ─────────────────────┐
-│ "Conversations"                                │  #empty      nothing selected │
-│ summary line: "3 of 36 tools · 48 …"           │  #session    transcript       │
-│ search box                                     │  #payload-view  raw JSON      │
-│ ── group: Claude Code (12) ──                  │                               │
-│    ┌ .row ───────────────────┐  ← rectangles   │                               │
-│    │ title, project, age     │                 │                               │
-│    └─────────────────────────┘                 │                               │
-│ Rescan · Demo data · progress line             │                               │
-└────────────────────────────────────────────────┴───────────────────────────────┘
+```bash
+npm test --prefix frontend
 ```
 
-**Sidebar** — one `.row` button per conversation, grouped by agent. Titles come from the
-backend, which derives them from the first user message; `clamp(text, 20)` in
-`renderer.js` shortens them for display and CSS adds an ellipsis. Rows that are too short
-to make a good quiz are marked `short` but stay selectable.
+`frontend/test/contract.test.js` checks that `lib/api.js`, `preload.js` and
+`backend/ipc.js` agree: every method the frontend calls is exposed, every exposed method
+has a handler, and nothing is exposed that nothing uses.
 
-**`.main`** — the states are `#empty`, `#session`, `#quiz`, and `#payload-view`, toggled
-with the `hidden` attribute. `select(id)` renders the transcript and focus prompt;
-`compat.generate({ id, prompt })` asks the main process to generate and validate the quiz;
-`#quiz` renders the interactive questions and score. The Gemini request runs in the main
-process, keeping the API key and filesystem access out of the renderer.
+Three files describe one interface and they drift silently. This caught two real defects
+on its first run: `quizButton` was called by `app.js` but never wrapped in `api.js`, which
+made a `Promise.all` reject and quietly emptied the conversation header; and `topicSlice`
+was exposed in preload with no channel in `ipc.js` at all.
+
+**Run it after touching any of the three files.** It is the cheapest test in the project
+and the only one that covers the seam.
 
 ---
 
 ## Conventions
 
-- **`textContent`, never `innerHTML`, for anything from a transcript.** Transcripts are
-  untrusted text copied out of other tools' stores. Tool names, titles and project labels
-  are also untrusted. This is the app's main XSS boundary.
-- **Design tokens live in `:root`** in `styles.css` (`--bg`, `--text`, `--accent`,
-  `--sidebar-w`, …). Restyle from there rather than adding literal colours.
-- **Classes are BEM-ish and flat**: `.row`, `.row__title`, `.msg--user`, `.btn--primary`.
-- **No inline scripts or styles** — the CSP in `index.html` is `default-src 'none'` and
-  will block them.
-- Keep DOM lookups in the `el` object at the top of `renderer.js` rather than scattering
-  `getElementById` calls.
-- Rebuild lists by replacing children (`replaceChildren()`), not by mutating. There is no
-  virtual DOM and no diffing.
-
----
-
-## Notes
-
-- `renderer.js` degrades gracefully if `window.compat` is missing: it says so instead of
-  throwing, which is what you will see if you open `index.html` directly in a browser.
-- `onProgress` fires per agent during a scan and is what drives the progress line in the
-  sidebar footer. A scan of a few dozen sessions finishes in about 2 s.
-- Renderer logs go to the DevTools console, not the terminal that started Electron.
+- **`textContent`, never `innerHTML`, for anything from a transcript.** Titles, project
+  names, tool names and message bodies all come from other tools' stores. The one
+  `innerHTML` in the codebase is in the earlier quiz component and should become DOM
+  construction.
+- **No em dashes, no emojis, no exclamation marks** in user-facing copy. The backend
+  enforces the same rule on generated content, and `scoreBand` copy is tested against it.
+- **Green and red are reserved for grading an answer.** The four score bands use other
+  hues (`--tone-low`, `--tone-mid`, `--tone-good`, `--tone-high`) so a colour never means
+  two things.
+- **Colour question types, not topics.** Three types is three accents and it is already on
+  every step as `kind`. A long session yields up to fourteen topics, at which point
+  per-topic colour is noise.
+- **Extend the tokens in `:root`** rather than adding literal colours.
+- **`type="module"` is required** on the entry script. Modules work because `main.js`
+  serves the page over the `app://` scheme; over `file://` the origin is null and
+  `script-src 'self'` refuses every import, silently.

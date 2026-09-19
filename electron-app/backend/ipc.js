@@ -35,12 +35,12 @@ export const IPC = {
   TOPICS: 'compat:topics',
   /** renderer -> main, { id, maxChars? }: every topic slice, each capped */
   TOPIC_SLICES: 'compat:topic-slices',
+  /** renderer -> main, { id, topicId, maxChars? }: one bounded topic slice */
+  TOPIC_SLICE: 'compat:topic-slice',
   /** renderer -> main, { id, questionCount, types, seed? }: plan without calling the model */
   PLAN_QUIZ: 'compat:plan-quiz',
   /** renderer -> main, { id, questionCount, types, seed? }: generate a full quiz */
   GENERATE_QUIZ: 'compat:generate-quiz',
-  /** renderer -> main: whether a Gemini key is configured (never the key itself) */
-  HAS_API_KEY: 'compat:has-api-key',
   /** renderer -> main, { id, types? }: can this conversation be quizzed, and why not */
   READINESS: 'compat:readiness',
   /** renderer -> main: option bounds, type labels and key state for the settings UI */
@@ -63,12 +63,20 @@ export const IPC = {
   EXTEND_QUIZ: 'compat:extend-quiz',
   /** renderer -> main, { quizId, answers, save? }: grade an attempt */
   GRADE_QUIZ: 'compat:grade-quiz',
-  /** renderer -> main, { quizId }: attempt history and best score */
-  ATTEMPTS: 'compat:attempts',
+  /** renderer -> main, { quizId }: where the user got to, and their last score */
+  QUIZ_PROGRESS_STATE: 'compat:quiz-progress',
+  /** renderer -> main, { quizId, stepIndex, answers, results }: save the position */
+  SAVE_QUIZ_PROGRESS: 'compat:save-quiz-progress',
+  /** renderer -> main, { quizId, score, maxScore }: a run was completed */
+  FINISH_QUIZ: 'compat:finish-quiz',
+  /** renderer -> main, { quizId }: retake, so start at the first step */
+  RESTART_QUIZ: 'compat:restart-quiz',
   /** renderer -> main: delete every stored quiz and attempt */
   CLEAR_QUIZZES: 'compat:clear-quizzes',
   /** renderer -> main: where the store lives and whether it is available */
   STORE_INFO: 'compat:store-info',
+  /** renderer -> main, { percentage }: the quartile band and its copy */
+  SCORE_BAND: 'compat:score-band',
   /** main -> renderer: scan progress events */
   PROGRESS: 'compat:progress',
   /** main -> renderer: scan finished */
@@ -105,17 +113,21 @@ export function registerCompatibilityIpc({ ipcMain, layer, getWindows = () => []
     [IPC.DIGEST, (opts) => layer.digest(opts?.id, opts)],
     [IPC.TOPICS, (opts) => layer.topics(opts?.id, opts)],
     [IPC.TOPIC_SLICES, (opts) => layer.topicSlices(opts?.id, opts)],
+    [IPC.TOPIC_SLICE, (opts) => layer.topicSlice(opts?.id, opts?.topicId, opts)],
     [IPC.PLAN_QUIZ, (opts) => layer.planQuiz(opts?.id, opts)],
-    [IPC.HAS_API_KEY, () => layer.hasApiKey()],
     [IPC.READINESS, (opts) => layer.assessReadiness(opts?.id, opts)],
     [IPC.QUIZ_CAPABILITIES, () => layer.quizCapabilities()],
     [IPC.STORE_INFO, () => layer.storeInfo],
+    [IPC.SCORE_BAND, (opts) => layer.scoreBand(opts?.percentage)],
     [IPC.GET_QUIZ, (opts) => layer.getQuiz(opts?.quizId)],
     [IPC.QUIZ_FOR_SESSION, (opts) => layer.getQuizForSession(opts?.id)],
     [IPC.LIST_QUIZZES, (opts) => layer.listQuizzes(opts)],
     [IPC.QUIZ_STALENESS, (opts) => layer.quizStaleness(opts?.id, opts)],
     [IPC.QUIZ_BUTTON, (opts) => layer.quizButton(opts?.id, opts)],
-    [IPC.ATTEMPTS, (opts) => layer.attempts(opts?.quizId)],
+    [IPC.QUIZ_PROGRESS_STATE, (opts) => layer.quizProgress(opts?.quizId)],
+    [IPC.SAVE_QUIZ_PROGRESS, (opts) => layer.saveQuizProgress(opts?.quizId, opts)],
+    [IPC.FINISH_QUIZ, (opts) => layer.finishQuiz(opts?.quizId, opts)],
+    [IPC.RESTART_QUIZ, (opts) => layer.restartQuiz(opts?.quizId)],
     [IPC.CLEAR_QUIZZES, () => layer.clearStoredQuizzes()],
     [IPC.GENERATE_AND_SAVE, (opts) =>
       layer.generateAndSaveQuiz(opts?.id, {

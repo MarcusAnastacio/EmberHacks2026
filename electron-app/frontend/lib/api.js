@@ -67,6 +67,8 @@ export function createApi(bridge = globalThis.compat) {
     readiness: call('readiness'),
     /** { id, questionCount, types } -> what would be generated, with no model call */
     planQuiz: call('planQuiz'),
+    /** { id, ...settings } -> label and action for the one top-right button */
+    quizButton: call('quizButton'),
     /** { id } -> deterministic topic segmentation */
     topics: call('topics'),
     /** { id, topicId } -> one bounded topic slice */
@@ -91,8 +93,18 @@ export function createApi(bridge = globalThis.compat) {
     quizzes: call('listQuizzes'),
     /** { quizId, answers, save? } -> per-question results and a total */
     grade: call('gradeQuiz'),
-    /** { quizId } -> attempt history and best score */
-    attempts: call('attempts'),
+
+    // ── Progress ───────────────────────────────────────────────────────────
+    /** { quizId } -> where the user got to, and the score from their last run */
+    progress: call('quizProgress'),
+    /** { quizId, stepIndex, answers, results } -> record the position */
+    saveProgress: call('saveQuizProgress'),
+    /** { quizId, score, maxScore } -> a run was completed; the position resets */
+    finish: call('finishQuiz'),
+    /** { quizId } -> retake, so the next visit starts at the first step */
+    restart: call('restartQuiz'),
+    /** { percentage } -> the quartile band and its copy */
+    band: call('scoreBand'),
     /** Delete every stored quiz and attempt. */
     clearQuizzes: call('clearQuizzes'),
     /** Where the store lives, and whether it is usable. */

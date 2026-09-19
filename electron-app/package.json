@@ -9,7 +9,9 @@
     "start:fixtures": "COMPAT_FIXTURES=1 electron .",
     "scan": "npm --prefix backend run scan --",
     "scan:fixtures": "npm --prefix backend run scan:fixtures --",
-    "test": "npm --prefix backend test"
+    "test": "npm --prefix backend test && npm --prefix frontend test",
+    "test:backend": "npm --prefix backend test",
+    "test:frontend": "npm --prefix frontend test"
   },
   "devDependencies": {
     "electron": "^44.0.0"

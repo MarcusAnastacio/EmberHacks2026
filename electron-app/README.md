@@ -48,7 +48,8 @@ will see):
 ```bash
 npm run scan              # scan this machine, print the table
 npm run scan:fixtures     # scan the bundled sample stores instead
-npm test                  # parser tests
+npm test                  # backend parser and storage tests
+npm test --prefix frontend  # the frontend/backend contract test
 ```
 
 ---

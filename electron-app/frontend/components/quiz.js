@@ -244,20 +244,25 @@ function feedback(result, { onNext, isLast }) {
   return block;
 }
 
-/** The end card. */
-export function renderResults(container, { summary, attempt, onBack, onRetry, storeInfo } = {}) {
+/**
+ * The end card.
+ *
+ * Wording comes from the band the backend chose, so the four thresholds and their copy
+ * are defined once. `tone` is exposed as a class so the colour can be styled without
+ * knowing which band produced it.
+ */
+export function renderResults(container, { summary, attempt, onBack, onRetry } = {}) {
   container.replaceChildren();
+  const band = summary?.band;
+
   const card = h(
     'section',
-    { class: 'result-card' },
-    h('div', { class: 'result-card__score', text: `${summary?.score ?? 0}/${summary?.total ?? 0}` }),
-    h('h3', { text: 'Nice work.' }),
+    { class: `result-card${band ? ` result-card--${band.tone}` : ''}` },
+    h('div', { class: 'result-card__score', text: `${summary?.score ?? 0} / ${summary?.total ?? 0}` }),
+    h('div', { class: 'result-card__percent', text: `${Math.round(summary?.percentage ?? 0)}%` }),
+    h('h3', { text: band?.headline || 'Quiz complete' }),
     h('p', { text: summary?.line || '' }),
   );
-
-  if (attempt?.tokens) {
-    card.append(h('p', { class: 'result-card__meta', text: `${attempt.tokens.toLocaleString('en-US')} tokens used grading` }));
-  }
 
   const row = h('div', { class: 'result-card__actions' });
   if (onRetry) row.append(h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: onRetry }));

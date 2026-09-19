@@ -7,6 +7,10 @@
 // types are decided locally and only `open` reaches the network.
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { QuizStore, fingerprintSession, settingsKey, quizIdFor, GENERATOR_VERSION } from '../lib/store.js';
 import { gradeAttempt, gradeObjective, gradeMcq, gradeCloze, gradeOpen, gradeSchema, normalizeAnswer } from '../lib/grade.js';
@@ -258,35 +262,125 @@ await check('coverage follows the last turn a quiz drew on', () => {
 
 // ── Attempts ───────────────────────────────────────────────────────────────
 
-await check('attempts are kept per quiz and the best score is reported', () => {
+await check('progress is saved, resumed, and reported as resumable', () => {
   const store = QuizStore.memory();
   const s = twoTopicSession();
   const { id } = store.saveQuiz(fakeQuiz(s), s, { settings: SETTINGS });
-  store.saveAttempt(id, { answers: { a: 1 }, score: 1, maxScore: 3 });
-  store.saveAttempt(id, { answers: { a: 2 }, score: 3, maxScore: 3 });
-  store.saveAttempt(id, { answers: { a: 3 }, score: 2, maxScore: 3 });
 
-  assert.equal(store.attempts(id).length, 3);
-  assert.deepEqual(store.bestScore(id), { best: 3, maxScore: 3, attempts: 3 });
-  // The list view carries a count so a row can show progress without loading attempts.
-  assert.equal(store.list()[0].attempts, 3);
+  assert.equal(store.getProgress(id), null, 'a fresh quiz should have no position');
+
+  store.saveProgress(id, { stepIndex: 2, answers: { a: 'x' }, results: { a: { awarded: 1 } } });
+  const p = store.getProgress(id);
+  assert.equal(p.stepIndex, 2);
+  assert.equal(p.resumable, true);
+  assert.equal(p.completed, false);
+  assert.deepEqual(p.answers, { a: 'x' });
+  assert.deepEqual(p.results, { a: { awarded: 1 } });
   store.close();
 });
 
-await check('an attempt against an unknown quiz is refused', () => {
-  const store = QuizStore.memory();
-  assert.throws(() => store.saveAttempt('nope', { answers: {} }), /no quiz/);
-  store.close();
-});
-
-await check('deleting a quiz removes its attempts and coverage', () => {
+await check('saving progress twice updates one row rather than appending', () => {
   const store = QuizStore.memory();
   const s = twoTopicSession();
   const { id } = store.saveQuiz(fakeQuiz(s), s, { settings: SETTINGS });
-  store.saveAttempt(id, { answers: {}, score: 1, maxScore: 3 });
+  store.saveProgress(id, { stepIndex: 1, answers: { a: 1 } });
+  store.saveProgress(id, { stepIndex: 2, answers: { a: 1, b: 2 } });
+  store.saveProgress(id, { stepIndex: 3, answers: { a: 1, b: 2, c: 3 } });
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM attempt').get().n, 1, 'progress appended instead of updating');
+  assert.equal(store.getProgress(id).stepIndex, 3);
+  store.close();
+});
+
+await check('finishing keeps the score and resets the position', () => {
+  // The stated behaviour: after a completed run, coming back offers a fresh attempt
+  // rather than a results screen the user has already read.
+  const store = QuizStore.memory();
+  const s = twoTopicSession();
+  const { id } = store.saveQuiz(fakeQuiz(s), s, { settings: SETTINGS });
+  store.saveProgress(id, { stepIndex: 2, answers: { a: 'x' } });
+  store.finishAttempt(id, { score: 2, maxScore: 3 });
+
+  const p = store.getProgress(id);
+  assert.equal(p.score, 2);
+  assert.equal(p.maxScore, 3);
+  assert.equal(p.completed, true);
+  assert.equal(p.stepIndex, 0, 'the position was not reset');
+  assert.deepEqual(p.answers, {}, 'answers survived the finish');
+  assert.equal(p.resumable, false, 'a finished quiz must not resume');
+  assert.equal(p.percentage, 66.7);
+  store.close();
+});
+
+await check('a second completion overwrites the score', () => {
+  const store = QuizStore.memory();
+  const s = twoTopicSession();
+  const { id } = store.saveQuiz(fakeQuiz(s), s, { settings: SETTINGS });
+  store.finishAttempt(id, { score: 1, maxScore: 3 });
+  store.finishAttempt(id, { score: 3, maxScore: 3 });
+  assert.equal(store.getProgress(id).score, 3, 'the score was not overwritten');
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM attempt').get().n, 1, 'a second run created a second row');
+  store.close();
+});
+
+await check('retake clears the position and keeps the score on display', () => {
+  const store = QuizStore.memory();
+  const s = twoTopicSession();
+  const { id } = store.saveQuiz(fakeQuiz(s), s, { settings: SETTINGS });
+  store.finishAttempt(id, { score: 2, maxScore: 3 });
+  store.saveProgress(id, { stepIndex: 1, answers: { a: 'x' } });
+  assert.equal(store.clearProgress(id), true);
+  const p = store.getProgress(id);
+  assert.equal(p.stepIndex, 0);
+  assert.equal(p.resumable, false);
+  assert.equal(p.score, 2, 'the previous score should survive a retake until it is replaced');
+  store.close();
+});
+
+await check('progress on an unknown quiz is refused', () => {
+  const store = QuizStore.memory();
+  assert.throws(() => store.saveProgress('nope', {}), /no quiz/);
+  assert.throws(() => store.finishAttempt('nope', {}), /no quiz/);
+  assert.equal(store.getProgress('nope'), null);
+  store.close();
+});
+
+await check('an older database is migrated rather than throwing', () => {
+  // A pre-release install has an attempt table without step_index or finished and
+  // without the one-row-per-quiz index. Opening it must not fail.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vex-migrate-'));
+  const file = path.join(dir, 'quiz.db');
+  const first = new QuizStore(file);
+  const s = twoTopicSession();
+  const { id } = first.saveQuiz(fakeQuiz(s), s, { settings: SETTINGS });
+  first.close();
+
+  // Simulate an old schema: drop the index and the new columns by rebuilding the table.
+  const raw = new DatabaseSync(file);
+  raw.exec('DROP INDEX IF EXISTS attempt_one_per_quiz');
+  raw.exec(`CREATE TABLE old_attempt AS SELECT id, quiz_id, started_at, finished_at, score, max_score, answers, results FROM attempt`);
+  raw.exec('DROP TABLE attempt');
+  raw.exec('ALTER TABLE old_attempt RENAME TO attempt');
+  raw.close();
+
+  const reopened = new QuizStore(file);
+  const columns = reopened.db.prepare('PRAGMA table_info(attempt)').all().map((c) => c.name);
+  assert.ok(columns.includes('step_index'), 'step_index was not added');
+  assert.ok(columns.includes('finished'), 'finished was not added');
+  const saved = reopened.saveProgress(id, { stepIndex: 4, answers: { a: 1 } });
+  assert.equal(saved.stepIndex, 4);
+  assert.equal(reopened.getProgress(id).stepIndex, 4);
+  reopened.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+await check('deleting a quiz removes its progress and coverage', () => {
+  const store = QuizStore.memory();
+  const s = twoTopicSession();
+  const { id } = store.saveQuiz(fakeQuiz(s), s, { settings: SETTINGS });
+  store.saveProgress(id, { stepIndex: 1, answers: { a: 1 } });
   assert.equal(store.deleteQuiz(id), true);
   assert.equal(store.getQuiz(id), null);
-  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM attempt').get().n, 0, 'attempts survived the delete');
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM attempt').get().n, 0, 'progress survived the delete');
   assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM topic_coverage').get().n, 0, 'coverage survived');
   assert.equal(store.deleteQuiz(id), false, 'deleting twice should report no change');
   store.close();

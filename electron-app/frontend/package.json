@@ -4,5 +4,8 @@
   "version": "0.1.0",
   "description": "VEX renderer: functional layer (lib/) and visual layer (components/).",
   "type": "module",
-  "//": "Browser modules are loaded with <script type=\"module\">, which is unaffected by this file. It exists so the functional layer (lib/api.js, lib/state.js, lib/quiz-view.js) can also be imported and unit tested in Node without relying on Node's syntax detection, which Electron's Node does not have."
+  "//": "Browser modules are loaded with <script type=\"module\">, which is unaffected by this file. It exists so the functional layer (lib/api.js, lib/state.js, lib/quiz-view.js) can also be imported and unit tested in Node without relying on Node's syntax detection, which Electron's Node does not have.",
+  "scripts": {
+    "test": "node test/contract.test.js"
+  }
 }

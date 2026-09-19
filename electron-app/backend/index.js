@@ -19,7 +19,7 @@ import { buildDigest } from './lib/digest.js';
 import { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
 import {
   generateQuiz, planQuiz, quizSchema, quizCapabilities, assessReadiness,
-  quizButtonState, QUESTION_TYPES,
+  quizButtonState, scoreBand, QUESTION_TYPES,
 } from './lib/quiz.js';
 import { hasApiKey, listModels } from './lib/gemini.js';
 import { QuizStore, sqliteAvailable, defaultStorePath, GENERATOR_VERSION } from './lib/store.js';
@@ -104,6 +104,34 @@ export class CompatibilityLayer extends EventEmitter {
     return this.getStore().staleness(session, opts);
   }
 
+  /**
+   * Where the user got to in a quiz, and the score from their last completed run.
+   * `resumable` says whether there is a position to restore.
+   */
+  quizProgress(quizId) {
+    return this.getStore().getProgress(quizId);
+  }
+
+  /** Record the position after each answer, so navigating away is safe. */
+  saveQuizProgress(quizId, position) {
+    return this.getStore().saveProgress(quizId, position);
+  }
+
+  /** Record a completed run: keeps the score, resets the position. */
+  finishQuiz(quizId, result) {
+    return this.getStore().finishAttempt(quizId, result);
+  }
+
+  /** Retake: forget the position, keep the previous score until it is replaced. */
+  restartQuiz(quizId) {
+    return this.getStore().clearProgress(quizId);
+  }
+
+  /** The quartile band and its copy for a percentage. */
+  scoreBand(percentage) {
+    return scoreBand(percentage);
+  }
+
   /** The label and action for the one button in the top right. */
   quizButton(id, opts) {
     const staleness = this.quizStaleness(id, opts);
@@ -153,11 +181,6 @@ export class CompatibilityLayer extends EventEmitter {
   async gradeOne(question, answer, opts) {
     if (question?.type === 'open') return gradeOpen(question, answer, opts);
     return gradeObjective(question, answer);
-  }
-
-  /** Attempt history and best score for a stored quiz. */
-  attempts(quizId) {
-    return { attempts: this.getStore().attempts(quizId), best: this.getStore().bestScore(quizId) };
   }
 
   /** The answer to "delete everything you have stored about me". */
@@ -400,7 +423,7 @@ export { sqliteAvailable } from './readers/sqlite.js';
 export { redact, redactPayload, patternKinds } from './lib/redact.js';
 export { buildDigest, digestFits, extractTouched, renderTurnRange } from './lib/digest.js';
 export { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
-export { generateQuiz, planQuiz, quizSchema, validateResult, quizCapabilities, assessReadiness, quizButtonState, QUESTION_TYPES, READINESS, DEFAULTS as QUIZ_DEFAULTS } from './lib/quiz.js';
+export { generateQuiz, planQuiz, quizSchema, validateResult, quizCapabilities, assessReadiness, quizButtonState, scoreBand, QUESTION_TYPES, READINESS, DEFAULTS as QUIZ_DEFAULTS } from './lib/quiz.js';
 export { generateJson, listModels, hasApiKey, resolveApiKey, GeminiError, DEFAULT_MODEL_CHAIN } from './lib/gemini.js';
 export { QuizStore, QuizStoreError, sqliteAvailable as storeAvailable, defaultStorePath, fingerprintSession, settingsKey, quizIdFor, GENERATOR_VERSION } from './lib/store.js';
 export { gradeAttempt, gradeOpen, gradeObjective, gradeMcq, gradeCloze, gradeSchema, normalizeAnswer } from './lib/grade.js';

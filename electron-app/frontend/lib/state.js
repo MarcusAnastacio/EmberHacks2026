@@ -29,6 +29,12 @@ const initial = {
   stage: 'idle',
   /** Per-question results once graded. */
   attempt: null,
+  /** The quartile band for the final score, from the backend. */
+  band: null,
+  /** The score from the last completed run, so a resumed quiz can show it. */
+  lastScore: null,
+  /** The label and action for the top-right button: { action, label, reason }. */
+  button: null,
   /** Any message the UI should surface, with its severity. */
   notice: null,
   /** True while a generation is in flight. */

@@ -135,6 +135,53 @@ export const DEFAULTS = {
 };
 
 /**
+ * The end-of-quiz band, in quartiles.
+ *
+ * Kept here rather than in the UI so the thresholds and the copy are one thing that can
+ * be tested, and so every screen that reports a score agrees. No em dashes and no
+ * exclamation marks, per the house style.
+ *
+ * @param {number} percentage  0 to 100
+ */
+export function scoreBand(percentage) {
+  const pct = Math.max(0, Math.min(100, Number(percentage) || 0));
+  if (pct < 25) {
+    return {
+      id: 'unfamiliar',
+      label: 'New ground',
+      headline: 'This was new ground',
+      line: 'Little of it stuck this time. Read the conversation again and come back. It reads differently once you know what the agent was aiming at.',
+      tone: 'low',
+    };
+  }
+  if (pct < 50) {
+    return {
+      id: 'partial',
+      label: 'Partly there',
+      headline: 'The shape of it, not the detail',
+      line: 'You followed where the work went. The parts you had to guess are worth a second look, and the flashcards cover most of them.',
+      tone: 'mid',
+    };
+  }
+  if (pct < 75) {
+    return {
+      id: 'solid',
+      label: 'Solid',
+      headline: 'Solid',
+      line: 'You know what happened here and why. A couple of details are still loose, which is normal after one pass.',
+      tone: 'good',
+    };
+  }
+  return {
+    id: 'strong',
+    label: 'Strong',
+    headline: 'You know this work',
+    line: 'Asked to explain this tomorrow, you would not need the transcript. That is the point of doing this.',
+    tone: 'high',
+  };
+}
+
+/**
  * What the one button in the top right should say and do.
  *
  * The described workflow is: a fresh conversation offers to generate, a conversation with

@@ -176,23 +176,24 @@ export function phaseCounts(steps) {
   };
 }
 
-/** A one-line summary of an attempt, for a results card. */
-export function summarize(attempt, steps) {
-  if (!attempt) return { score: 0, total: 0, percentage: 0, line: '' };
+/**
+ * The results card's contents.
+ *
+ * The band and its copy come from the backend so the thresholds live in one place and
+ * every screen that reports a score agrees. `band` is null when there is nothing to score.
+ */
+export function summarize(attempt, { band = null } = {}) {
+  if (!attempt) {
+    return { score: 0, total: 0, percentage: 0, band: null, line: 'Nothing to score yet.' };
+  }
   const total = attempt.maxScore || 0;
   const percentage = attempt.percentage || 0;
   return {
-    score: attempt.score,
+    score: attempt.score ?? 0,
     total,
     percentage,
+    band,
     mapped: attempt.perQuestion || [],
-    line:
-      total === 0
-        ? 'Nothing to score yet.'
-        : percentage >= 90
-          ? 'You have a strong handle on this work.'
-          : percentage >= 60
-            ? 'Mostly there. Review the parts you missed and try again.'
-            : 'Worth re-reading the conversation before trying again.',
+    line: total === 0 ? 'Nothing to score yet.' : band?.line || '',
   };
 }
