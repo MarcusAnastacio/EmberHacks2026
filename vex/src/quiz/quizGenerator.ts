@@ -48,7 +48,7 @@ function normalizeCodeReference(value: unknown, context: LearningContext): CodeR
 		return undefined;
 	}
 	if (typeof reference.symbolName !== 'string' || !reference.symbolName.trim()) {
-		return { filePath };
+		return undefined;
 	}
 	const symbol = flattenSymbols([
 		...(context.codeSymbols ?? []),
@@ -57,8 +57,7 @@ function normalizeCodeReference(value: unknown, context: LearningContext): CodeR
 	if (!symbol) {
 		return undefined;
 	}
-	if ((reference.startLine !== undefined && reference.startLine !== symbol.startLine) ||
-		(reference.endLine !== undefined && reference.endLine !== symbol.endLine)) {
+	if (reference.startLine !== symbol.startLine || reference.endLine !== symbol.endLine) {
 		return undefined;
 	}
 	return {

@@ -89,15 +89,17 @@ export function deactivate(): void {}
 async function viewCodeReference(reference: CodeReference): Promise<void> {
 	try {
 		const document = await vscode.workspace.openTextDocument(vscode.Uri.file(reference.filePath));
-		const editor = await vscode.window.showTextDocument(document);
-		if (reference.startLine === undefined || reference.endLine === undefined || document.lineCount === 0) {
+		if (reference.startLine === undefined || reference.endLine === undefined ||
+			reference.startLine < 1 || reference.endLine < reference.startLine || reference.endLine > document.lineCount) {
+			void vscode.window.showWarningMessage('VEX: This code reference is no longer available in the current file.');
 			return;
 		}
-		const startLine = Math.max(0, Math.min(document.lineCount - 1, reference.startLine - 1));
-		const endLine = Math.max(startLine, Math.min(document.lineCount - 1, reference.endLine - 1));
+		const startLine = reference.startLine - 1;
+		const endLine = reference.endLine - 1;
 		const start = new vscode.Position(startLine, 0);
 		const end = new vscode.Position(endLine, document.lineAt(endLine).text.length);
 		const range = new vscode.Range(start, end);
+		const editor = await vscode.window.showTextDocument(document, { selection: range });
 		editor.selection = new vscode.Selection(start, end);
 		editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
 	} catch (error) {
