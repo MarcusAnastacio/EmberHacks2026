@@ -21,7 +21,7 @@ The backend uses `node:sqlite` and `zlib.zstdDecompressSync`, both of which need
 Node. **Electron 44 or newer bundles Node 24**, which is why the dependency floor is where
 it is — an older Electron silently degrades every SQLite-based agent (Cursor, opencode,
 Goose, Crush, Zed) to "detected but unparsed".
-
+su
 Verify what your shell and your Electron actually give you:
 
 ```bash
@@ -47,6 +47,7 @@ will see):
 
 ```bash
 npm run scan              # scan this machine, print the table
+npm run scan -- --only copilot-chat --progress  # scan one harness with progress
 npm run scan:fixtures     # scan the bundled sample stores instead
 npm test                  # parser tests
 ```
@@ -184,13 +185,12 @@ the **Show Gemini payload** button are how to inspect exactly what would leave t
 - Selecting a conversation renders the full transcript, with tool calls labelled per turn.
 - **Show Gemini payload** — the exact bounded JSON the quiz generator will be given, with
   its character count and truncation flag.
+- Focus prompt plus **Generate quiz** — Gemini returns validated multiple-choice questions;
+  the renderer tracks answers and shows a score.
 - `npm run scan:fixtures` → 33 of 36 agents producing parsed sessions on any machine.
 
 **Not built yet**
 
-- Quiz generation. `Generate quiz` is disabled, and the payload is the seam it will use.
-- Quiz rendering. The main panel currently shows the transcript; that view is the
-  placeholder to replace.
 - **Redaction.** `backend/detect.js` → `toQuizPayload()` is the single choke point where a
   conversation leaves the machine, and it does not scrub secrets today. Transcripts contain
   API keys, tokens and `.env` contents, so this must be added before anything is sent to

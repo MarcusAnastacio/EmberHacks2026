@@ -7,8 +7,8 @@
   "scripts": {
     "start": "electron .",
     "start:fixtures": "COMPAT_FIXTURES=1 electron .",
-    "scan": "npm --prefix backend run scan",
-    "scan:fixtures": "npm --prefix backend run scan:fixtures",
+    "scan": "npm --prefix backend run scan --",
+    "scan:fixtures": "npm --prefix backend run scan:fixtures --",
     "test": "npm --prefix backend test"
   },
   "devDependencies": {

@@ -81,8 +81,8 @@ Two things worth knowing before the first launch:
 | History compatibility layer — discover and normalize past conversations from up to 36 agents | **Working.** Detected, parsed, normalized to one schema, read-only. |
 | Electron shell — sidebar of detected conversations, transcript on selection | **Working.** |
 | Gemini payload — the exact bounded JSON a quiz would be generated from | **Working**, inspectable in-app via *Show Gemini payload*. |
-| Quiz generation | **Not built.** The button is disabled; the payload is the seam. |
-| Quiz interface | **Not built.** The main panel shows the transcript, which is the placeholder to replace. |
+| Quiz generation | **Working.** The main process sends a bounded transcript plus a focus prompt to Gemini and validates the JSON response. |
+| Quiz interface | **Working.** Select a conversation, add a focus prompt, answer multiple-choice questions, and see your score. |
 | Secret redaction | **Not built.** Must be added before any transcript is sent to a model — see below. |
 
 Details and the honest gaps per agent are in
@@ -121,9 +121,9 @@ tokens, `.env` contents and internal URLs, and this app asks to read all of them
 - It is **read-only** today — stores are opened read-only, nothing is written, renamed or
   deleted.
 - It is **local-only** today — no network calls exist anywhere in the codebase.
-- It is **not redacted** today. `toQuizPayload()` in `electron-app/backend/detect.js` is the
-  single function where a conversation would leave the machine, which makes it the single
-  place redaction has to be added.
+- Quiz generation sends the bounded payload from `toQuizPayload()` in
+  `electron-app/backend/detect.js` to Gemini. Redaction should be added there before using
+  the generator with real transcripts.
 
 Any real deployment needs that redaction pass first, and a clear statement to the user about
 what is read and what is sent.

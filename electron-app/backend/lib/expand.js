@@ -18,8 +18,44 @@ import path from 'node:path';
 
 export const HOME = os.homedir();
 export const PLATFORM = process.platform; // darwin | linux | win32
+export const PLATFORM_NAME = PLATFORM === 'win32'
+  ? 'windows'
+  : PLATFORM === 'darwin'
+    ? 'macos'
+    : PLATFORM === 'linux'
+      ? 'linux'
+      : PLATFORM;
 
 const isWin = PLATFORM === 'win32';
+
+/** Concrete roots used by agent applications on the current operating system. */
+export function platformRoots() {
+  if (isWin) {
+    return {
+      home: HOME,
+      appData: process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'),
+      localAppData: process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'),
+      config: process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'),
+      data: process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'),
+    };
+  }
+  if (PLATFORM === 'darwin') {
+    return {
+      home: HOME,
+      appData: path.join(HOME, 'Library', 'Application Support'),
+      localAppData: path.join(HOME, 'Library', 'Caches'),
+      config: path.join(HOME, 'Library', 'Preferences'),
+      data: path.join(HOME, 'Library', 'Application Support'),
+    };
+  }
+  return {
+    home: HOME,
+    appData: process.env.XDG_DATA_HOME || path.join(HOME, '.local', 'share'),
+    localAppData: path.join(HOME, '.cache'),
+    config: process.env.XDG_CONFIG_HOME || path.join(HOME, '.config'),
+    data: process.env.XDG_DATA_HOME || path.join(HOME, '.local', 'share'),
+  };
+}
 
 /** Join a Dirent's parent path and name without depending on Dirent internals. */
 function join(parent, name) {
@@ -113,6 +149,11 @@ export function vscodeUserDirs() {
   return editors.map((e) => path.join(appData, e, 'User'));
 }
 
+/** VS Code's sibling data directory contains agent sessions and global storage. */
+export function vscodeDataDirs() {
+  return vscodeUserDirs().map((userDir) => path.dirname(userDir));
+}
+
 /** OS-native application-data roots (for `<app data>` templates). */
 function appDataDirs() {
   if (isWin) return [process.env.APPDATA, process.env.LOCALAPPDATA].filter(Boolean);
@@ -135,6 +176,7 @@ function appDataDirs() {
  */
 const PLACEHOLDERS = {
   '<vscode-User>': vscodeUserDirs,
+  '<vscode-data>': vscodeDataDirs,
   '<vscode-globalStorage>': () => vscodeUserDirs().map((u) => path.join(u, 'globalStorage')),
   '<app data>': appDataDirs,
   '<appData>': appDataDirs,
@@ -145,6 +187,18 @@ const PLACEHOLDERS = {
  * Multi-valued placeholders fan out; everything else is a string substitution.
  */
 export function expandStorePath(template, { projectRoot } = {}) {
+  // Registry entries include valid paths for multiple operating systems. Do
+  // not turn a foreign default into a real-looking path under the current
+  // user's home directory (for example C:\Users\name\Library on Windows).
+  if (PLATFORM !== 'darwin' && /(?:^|[/\\])Library[/\\]/.test(template)) return [];
+  if (
+    PLATFORM === 'win32' &&
+    /(?:^|[/\\])\.config[/\\]|(?:^|[/\\])\.local[/\\]/.test(template) &&
+    process.env.XDG_CONFIG_HOME === undefined &&
+    process.env.XDG_DATA_HOME === undefined
+  ) return [];
+  if (PLATFORM !== 'win32' && /%(?:APPDATA|LOCALAPPDATA)%/.test(template) && process.env.APPDATA === undefined && process.env.LOCALAPPDATA === undefined) return [];
+
   let patterns = [template];
 
   for (const [token, fn] of Object.entries(PLACEHOLDERS)) {
@@ -163,7 +217,9 @@ export function expandStorePath(template, { projectRoot } = {}) {
     .map((p) => expandTemplate(p))
     .filter((p) => !isMissing(p))
     .map((p) => (p.startsWith('~') ? path.join(HOME, p.slice(1)) : p))
-    .map((p) => p.replace(/\/+/g, '/'))
+    // node:fs glob patterns use POSIX separators even on Windows. Keep the
+    // drive prefix intact while converting native separators for globbing.
+    .map((p) => PLATFORM === 'win32' ? p.replace(/\\/g, '/') : path.normalize(p))
     .filter(Boolean)
     // Never glob from the filesystem root: a pattern whose only fixed prefix is
     // `/` would walk the whole disk.

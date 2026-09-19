@@ -13,6 +13,7 @@
 
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const fs = require('node:fs');
 
 const FIXTURES = process.env.COMPAT_FIXTURES === '1';
 
@@ -20,7 +21,18 @@ const FIXTURES = process.env.COMPAT_FIXTURES === '1';
 let layer = null;
 let mainWindow = null;
 
+function loadLocalEnv() {
+  for (const file of [path.join(__dirname, '.env'), path.join(__dirname, '..', '.env')]) {
+    if (!fs.existsSync(file)) continue;
+    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (match && !process.env[match[1]]) process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, '');
+    }
+  }
+}
+
 async function bootstrap() {
+  loadLocalEnv();
   // 1. backend
   const { CompatibilityLayer } = await import('./backend/index.js');
   const { registerCompatibilityIpc } = await import('./backend/ipc.js');

@@ -213,6 +213,8 @@
         "<vscode-User>/workspaceStorage/*/chatSessions/*.{json,jsonl}",
         "<vscode-User>/workspaceStorage/*/GitHub.copilot-chat/transcripts/*.jsonl",
         "<vscode-User>/globalStorage/emptyWindowChatSessions/*.{json,jsonl}",
+        "<vscode-data>/agentSessionData/*/session.db",
+        "<vscode-User>/globalStorage/github.copilot-chat/session-store.db",
         "<vscode-User>/workspaceStorage/no-workspace/chatSessions/*.json",
         "${DEJA_COPILOT_CHAT_ROOTS}"
       ],

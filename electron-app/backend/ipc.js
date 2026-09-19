@@ -23,6 +23,8 @@ export const IPC = {
   SESSION: 'compat:session',
   /** renderer -> main, { id, maxChars? }: trimmed payload for Gemini */
   PAYLOAD: 'compat:payload',
+  /** renderer -> main, { id, prompt, options? }: generate a quiz */
+  GENERATE: 'compat:generate',
   /** renderer -> main, query: flat, body-less candidate list */
   SEARCH: 'compat:search',
   /** renderer -> main, no args: every harness we know about, detected or not */
@@ -61,6 +63,7 @@ export function registerCompatibilityIpc({ ipcMain, layer, getWindows = () => []
     }],
     [IPC.SESSION, (id) => layer.getSession(id)],
     [IPC.PAYLOAD, (opts) => layer.quizPayload(opts?.id, opts)],
+    [IPC.GENERATE, (opts) => layer.generateQuiz(opts)],
     [IPC.SEARCH, (query) => layer.search(query)],
     [IPC.REGISTRY, () => layer.registry().map((h) => ({
       id: h.id,
@@ -95,6 +98,7 @@ export function createRendererApi(invoke, on = null) {
     refresh: (opts) => invoke(IPC.REFRESH, opts),
     session: (id) => invoke(IPC.SESSION, id),
     payload: (opts) => invoke(IPC.PAYLOAD, opts),
+    generate: (opts) => invoke(IPC.GENERATE, opts),
     search: (query) => invoke(IPC.SEARCH, query),
     registry: () => invoke(IPC.REGISTRY),
 

@@ -6,6 +6,13 @@ exist on the user's disk, so the app can feed one into Gemini and turn it into a
 Zero config. Zero runtime dependencies. Read-only — it never writes to another agent's
 store. A scan of a real machine with a few dozen sessions takes under 2 s.
 
+The scanner detects the host operating system at runtime (`win32`, `darwin`, or `linux`)
+and resolves agent locations against that system's native home and application-data roots.
+Windows uses `%APPDATA%` and `%LOCALAPPDATA%`, macOS uses `~/Library`, and Linux uses
+`XDG_CONFIG_HOME` / `XDG_DATA_HOME` with `~/.config` and `~/.local/share` fallbacks.
+Paths for other operating systems are skipped instead of being searched under the wrong
+home directory.
+
 ```
 $ npm run scan
 
@@ -17,6 +24,10 @@ VS Code Copilot Chat  28     0         0           ~/.config/Code/User/workspace
 -----------------------------------------------------------------------
 3/36 harnesses detected · 48 sessions · 43 quiz-ready   <- illustrative; depends on what you have installed
 ```
+
+For VS Code-family editors, the scanner checks both the traditional
+`User/workspaceStorage` and `User/globalStorage` locations and the newer sibling
+`agentSessionData/*/session.db` location used by recent VS Code builds.
 
 ---
 
@@ -35,6 +46,13 @@ node cli.js --show <session-id>          # inspect one normalized session
 node cli.js --payload <session-id>       # print the exact JSON handed to Gemini
 node cli.js --only pi,codex,cursor       # restrict the scan
 node cli.js --progress                   # per-harness progress lines on stderr
+```
+
+From the `electron-app` directory, pass backend CLI arguments after the extra
+separator:
+
+```bash
+npm run scan -- --only copilot-chat --progress
 ```
 
 ### From Electron
@@ -150,6 +168,17 @@ Every template honours the tool's own env vars, so non-default installs work:
 `CLINE_SESSION_DATA_DIR`, `OPENCLAW_STATE_DIR`, `GROK_HOME`, `KIMI_CODE_HOME`, `DSH_HOME`,
 `GOOSE_PATH_ROOT`, `CURSOR_CONFIG_DIR`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `APPDATA`,
 `LOCALAPPDATA`, `AIDER_CHAT_HISTORY_FILE`, plus our own `DEJA_*_ROOT` overrides.
+
+The scan catalog also exposes the resolved platform metadata:
+
+```js
+catalog.platform
+// {
+//   id: "win32",
+//   name: "windows",
+//   roots: { home, appData, localAppData, config, data }
+// }
+```
 
 ---
 

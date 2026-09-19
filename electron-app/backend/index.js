@@ -14,6 +14,7 @@
 
 import { EventEmitter } from 'node:events';
 import { scanAll, discoverStores, findSession, toQuizPayload, isQuizReady, loadRegistry, QUIZ_MIN_CHARS, QUIZ_MIN_USER_TURNS } from './detect.js';
+import { generateQuiz } from './generator.js';
 
 export class CompatibilityLayer extends EventEmitter {
   constructor(options = {}) {
@@ -94,6 +95,7 @@ export class CompatibilityLayer extends EventEmitter {
     return {
       scanned: true,
       scannedAt: this.catalog.scannedAt,
+      platform: this.catalog.platform,
       sqlite: this.catalog.sqlite,
       detectedHarnesses: this.catalog.detectedHarnesses,
       totalHarnesses: this.catalog.totalHarnesses,
@@ -115,6 +117,11 @@ export class CompatibilityLayer extends EventEmitter {
     const session = this.getSession(id);
     if (!session) return null;
     return toQuizPayload(session, opts);
+  }
+
+  async generateQuiz({ id, prompt, maxChars = 24000, maxMessages = 120 } = {}) {
+    const payload = this.quizPayload(id, { maxChars, maxMessages });
+    return generateQuiz({ payload, prompt });
   }
 
   /**
@@ -142,6 +149,6 @@ export {
   QUIZ_MIN_CHARS,
   QUIZ_MIN_USER_TURNS,
 };
-export { expandStorePath, globStorePaths } from './lib/expand.js';
+export { expandStorePath, globStorePaths, PLATFORM, PLATFORM_NAME, platformRoots } from './lib/expand.js';
 export { readStoreFile } from './readers/index.js';
 export { sqliteAvailable } from './readers/sqlite.js';

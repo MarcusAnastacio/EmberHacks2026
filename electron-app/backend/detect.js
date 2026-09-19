@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { expandStorePath, globStorePaths, walkFiles, HOME } from './lib/expand.js';
+import { expandStorePath, globStorePaths, walkFiles, HOME, PLATFORM, PLATFORM_NAME, platformRoots } from './lib/expand.js';
 import { readStoreFile } from './readers/index.js';
 import { sqliteAvailable, sqliteUnavailableReason } from './readers/sqlite.js';
 import { EXTRA_HARNESSES } from './registry.extras.js';
@@ -218,6 +218,11 @@ export async function scanAll(opts = {}) {
 
   return {
     scannedAt: Date.now(),
+    platform: {
+      id: PLATFORM,
+      name: PLATFORM_NAME,
+      roots: platformRoots(),
+    },
     home: HOME,
     sqlite: { available: sqliteAvailable(), reason: sqliteAvailable() ? undefined : sqliteUnavailableReason() },
     harnesses: report,
@@ -270,6 +275,7 @@ export function toQuizPayload(session, { maxChars = 24000, maxMessages = 120 } =
     harness: session.harness,
     harnessName: session.harnessName,
     project: session.project,
+    cwd: session.cwd,
     title: session.title,
     startedAt: new Date(session.started).toISOString(),
     userTurns: session.userTurns,

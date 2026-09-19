@@ -69,6 +69,7 @@ compat.list(options?)             // sidebar catalog: detected agents grouped wi
 compat.refresh(options?)          // rescan. { fixtures: true } uses bundled sample stores
 compat.session(id)                // one conversation, WITH message bodies
 compat.payload({ id, maxChars })  // bounded, trimmed JSON for Gemini
+compat.generate({ id, prompt })    // generate a validated quiz in the main process
 compat.search(query)              // flat, body-less list for a search box
 compat.registry()                 // every agent we know about, detected or not
 
@@ -116,7 +117,7 @@ whole. Message bodies arrive only when you ask for one conversation.
 
 ---
 
-## Current UI, and what it is meant to become
+## Current UI
 
 The window is a two-pane split. Everything left of the seam is real; the right pane is a
 placeholder for the quiz.
@@ -139,13 +140,11 @@ backend, which derives them from the first user message; `clamp(text, 20)` in
 `renderer.js` shortens them for display and CSS adds an ellipsis. Rows that are too short
 to make a good quiz are marked `short` but stay selectable.
 
-**`.main`** — the three states are `#empty`, `#session`, `#payload-view`, toggled with the
-`hidden` attribute. `select(id)` renders `#session`; `showPayload()` swaps in
-`#payload-view`.
-
-To build the quiz view, the seam is already there: `#session` is the element to replace,
-and `compat.payload({ id })` returns exactly what the generator will be given. The
-`Generate quiz` button is deliberately disabled and currently only logs.
+**`.main`** — the states are `#empty`, `#session`, `#quiz`, and `#payload-view`, toggled
+with the `hidden` attribute. `select(id)` renders the transcript and focus prompt;
+`compat.generate({ id, prompt })` asks the main process to generate and validate the quiz;
+`#quiz` renders the interactive questions and score. The Gemini request runs in the main
+process, keeping the API key and filesystem access out of the renderer.
 
 ---
 

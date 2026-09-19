@@ -11,6 +11,7 @@ const CH = {
   REFRESH: 'compat:refresh',
   SESSION: 'compat:session',
   PAYLOAD: 'compat:payload',
+  GENERATE: 'compat:generate',
   SEARCH: 'compat:search',
   REGISTRY: 'compat:registry',
   PROGRESS: 'compat:progress',
@@ -40,6 +41,8 @@ contextBridge.exposeInMainWorld('compat', {
   session: (id) => ipcRenderer.invoke(CH.SESSION, id),
   /** Trimmed, bounded payload for Gemini. */
   payload: (options) => ipcRenderer.invoke(CH.PAYLOAD, options),
+  /** Generate a quiz in the main process from one session and a prompt. */
+  generate: (options) => ipcRenderer.invoke(CH.GENERATE, options),
   /** Flat, body-less candidate list for a search box. */
   search: (query) => ipcRenderer.invoke(CH.SEARCH, query),
   /** Every harness we know about, detected or not. */

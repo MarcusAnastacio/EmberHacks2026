@@ -45,12 +45,10 @@
       <!-- ── Main panel ──────────────────────────────────────────────────── -->
       <main class="main" id="main">
         <div class="empty" id="empty">
-          <h2>Pick a conversation</h2>
-          <p>
-            Everything in the list on the left was read from an AI agent's own history
-            on this machine. Selecting one shows its transcript — that transcript is
-            what gets sent to Gemini to build the quiz.
-          </p>
+          <div class="empty__eyebrow">AGENT QUIZ</div>
+          <h2>Turn your work into a memory test.</h2>
+          <p>Select a conversation, tell us what you want to learn, and get a focused quiz generated from the agent's actual work.</p>
+          <div class="empty__steps"><span>01 Select a conversation</span><span>02 Add a focus</span><span>03 Test yourself</span></div>
         </div>
 
         <article class="session" id="session" hidden>
@@ -63,12 +61,30 @@
               <button id="show-payload" class="btn btn--ghost" type="button">
                 Show Gemini payload
               </button>
-              <button id="generate" class="btn btn--primary" type="button" disabled title="Quiz generation is the next piece">
-                Generate quiz
-              </button>
+              <button id="generate" class="btn btn--primary" type="button">Generate quiz</button>
             </div>
           </header>
+          <section class="prompt-card">
+            <label for="quiz-prompt">What should this quiz focus on?</label>
+            <textarea id="quiz-prompt" rows="2" placeholder="e.g. Test me on the architectural decisions and bugs we fixed"></textarea>
+            <div class="prompt-card__foot">
+              <span>Uses the selected transcript · stays on your machine until generation</span>
+              <span id="prompt-count">0 / 240</span>
+            </div>
+          </section>
           <div class="session__messages" id="messages"></div>
+        </article>
+
+        <article class="quiz" id="quiz" hidden>
+          <header class="session__head">
+            <div class="session__titles">
+              <div class="quiz__kicker" id="quiz-progress">QUESTION 1 OF 5</div>
+              <h2 class="session__title" id="quiz-title"></h2>
+              <p class="session__sub" id="quiz-description"></p>
+            </div>
+            <button id="restart-quiz" class="btn btn--ghost" type="button">Back to conversation</button>
+          </header>
+          <div id="quiz-body"></div>
         </article>
 
         <article class="payload" id="payload-view" hidden>
