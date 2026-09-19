@@ -1,0 +1,990 @@
+{
+  "schema_version": 1,
+  "harnesses": [
+    {
+      "id": "aider",
+      "store_paths": [
+        "~/.aider.chat.history.md",
+        "${AIDER_CHAT_HISTORY_FILE}",
+        "${DEJA_AIDER_ROOTS}/**/.aider.chat.history.md"
+      ],
+      "format_kind": "markdown-log",
+      "fixture_paths": [
+        "fixtures/registry/aider/.aider.chat.history.md"
+      ],
+      "parser_source": "internal/sources/aider.go",
+      "last_verified": "2026-07-27",
+      "display_name": "aider",
+      "capabilities": {
+        "mcp": false,
+        "auto": true,
+        "skill": false,
+        "command": false,
+        "resume": false,
+        "handoff": "exec",
+        "prereq": "deja aider"
+      },
+      "gaps": {
+        "mcp": {
+          "state": "blocked",
+          "why": "aider has no MCP client. Not a design limit but an unimplemented feature: several open requests and an open PR adding it, so this becomes work the day they ship it. Until then recall reaches aider through the read: context file",
+          "source": "https://github.com/Aider-AI/aider/pull/5539"
+        },
+        "skill": {
+          "state": "impossible",
+          "why": "aider loads instruction files, it does not load them by name on demand: --read (and a CONVENTIONS.md by habit) puts a file in every message, which is what deja already writes as aider's context file. There is no catalogue an agent picks from, so a skill would only be the same always-on text under another name",
+          "source": "aider 0.86.2 --help: --read/--file/--config, no skills flag"
+        },
+        "command": {
+          "state": "blocked",
+          "why": "the slash command set is built in; adding custom commands is an open feature request upstream, not something a third party can wire today",
+          "source": "https://github.com/Aider-AI/aider/issues/894"
+        },
+        "resume": {
+          "state": "impossible",
+          "why": "aider has no notion of resuming one past session: `--chat-history-file` points at a transcript file it appends to, not a session it reopens, so there is no id to hand back. Restoring one conversation out of that file is not something the CLI offers.",
+          "source": "aider 0.86.2 --help"
+        }
+      }
+    },
+    {
+      "id": "amp",
+      "store_paths": [
+        "~/.local/share/amp/threads/*.json",
+        "${XDG_DATA_HOME}/amp/threads/*.json",
+        "${DEJA_AMP_ROOT}/*.json"
+      ],
+      "format_kind": "json-thread",
+      "fixture_paths": [
+        "fixtures/registry/amp/thread.json"
+      ],
+      "parser_source": "internal/sources/amp.go",
+      "last_verified": "2026-09-02",
+      "display_name": "Amp",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      },
+      "gaps": {}
+    },
+    {
+      "id": "antigravity",
+      "store_paths": [
+        "~/.gemini/antigravity*/brain/*/.system_generated/logs/transcript.jsonl",
+        "${DEJA_ANTIGRAVITY_ROOT}/brain/*/.system_generated/logs/transcript.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/antigravity/brain/registry-antigravity/.system_generated/logs/transcript.jsonl"
+      ],
+      "parser_source": "internal/sources/antigravity.go",
+      "last_verified": "2026-07-17",
+      "display_name": "Antigravity",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      }
+    },
+    {
+      "id": "claude",
+      "store_paths": [
+        "${CLAUDE_CONFIG_DIR:-~/.claude}/${CLAUDE_CODE_PROJECT_DIR_NAME:-projects}/**/*.jsonl",
+        "${CLAUDE_CONFIG_DIR:-~/.claude}/transcripts/**/*.jsonl",
+        "${HOME}/Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig/${CLAUDE_CODE_PROJECT_DIR_NAME:-projects}/**/*.jsonl",
+        "${DEJA_XCODE_CLAUDE_ROOT}/**/*.jsonl",
+        "${DEJA_CC_MIRROR_ROOT:-~/.cc-mirror}/*/.claude/${CLAUDE_CODE_PROJECT_DIR_NAME:-projects}/**/*.jsonl",
+        "${DEJA_CLAUDE_ROOT}/**/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/claude-code/session.jsonl"
+      ],
+      "parser_source": "internal/sources/claude.go",
+      "last_verified": "2026-09-10",
+      "display_name": "Claude Code",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      }
+    },
+    {
+      "id": "cline",
+      "store_paths": [
+        "${CLINE_SESSION_DATA_DIR:-${CLINE_DATA_DIR:-${CLINE_DIR:-~/.cline}/data}/sessions}/*/*.messages.json",
+        "<vscode-globalStorage>/saoudrizwan.claude-dev/tasks/*/api_conversation_history.json",
+        "${DEJA_CLINE_ROOT}/*/*.messages.json",
+        "${DEJA_CLINE_ROOTS}/tasks/*/api_conversation_history.json"
+      ],
+      "format_kind": "json",
+      "fixture_paths": [
+        "fixtures/registry/cline/modern/sessions/session_synthetic_01/session_synthetic_01.messages.json",
+        "fixtures/registry/cline/legacy/tasks/1767225600000/api_conversation_history.json"
+      ],
+      "parser_source": "internal/sources/cline.go",
+      "last_verified": "2026-07-28",
+      "display_name": "Cline",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      },
+      "gaps": {}
+    },
+    {
+      "id": "codex",
+      "store_paths": [
+        "${CODEX_HOME:-~/.codex}/sessions/**/rollout-*.jsonl",
+        "${CODEX_HOME:-~/.codex}/sessions/**/rollout-*.jsonl.zst",
+        "${CODEX_HOME:-~/.codex}/archived_sessions/**/rollout-*.jsonl",
+        "${CODEX_HOME:-~/.codex}/archived_sessions/**/rollout-*.jsonl.zst",
+        "${CODEX_HOME:-~/.codex}/history.jsonl",
+        "${DEJA_CODEX_ROOT}/sessions/**/rollout-*.jsonl",
+        "${HOME}/Library/Developer/Xcode/CodingAssistant/codex/sessions/**/rollout-*.jsonl",
+        "${HOME}/Library/Developer/Xcode/CodingAssistant/codex/archived_sessions/**/rollout-*.jsonl",
+        "${DEJA_XCODE_CODEX_ROOT}/sessions/**/rollout-*.jsonl"
+      ],
+      "format_kind": "jsonl-rollout-and-history",
+      "fixture_paths": [
+        "fixtures/registry/codex/rollout-2026-07-17T09-00-00-registry-codex.jsonl"
+      ],
+      "parser_source": "internal/sources/codex.go",
+      "last_verified": "2026-09-10",
+      "display_name": "Codex CLI",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      }
+    },
+    {
+      "id": "copilot",
+      "store_paths": [
+        "${DEJA_COPILOT_ROOT:-~/.copilot/session-state}/*/events.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/copilot/7cf44517-55ca-435c-893a-3fde1973a44e/events.jsonl"
+      ],
+      "parser_source": "internal/sources/copilot.go",
+      "last_verified": "2026-08-14",
+      "display_name": "Copilot CLI",
+      "capabilities": {
+        "mcp": true,
+        "auto": false,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      },
+      "gaps": {
+        "auto": {
+          "state": "impossible",
+          "why": "Copilot runs the hooks but drops their context, so recall there is MCP plus the skill"
+        }
+      }
+    },
+    {
+      "id": "copilot-chat",
+      "store_paths": [
+        "<vscode-User>/workspaceStorage/*/chatSessions/*.{json,jsonl}",
+        "<vscode-User>/workspaceStorage/*/GitHub.copilot-chat/transcripts/*.jsonl",
+        "<vscode-User>/globalStorage/emptyWindowChatSessions/*.{json,jsonl}",
+        "<vscode-User>/workspaceStorage/no-workspace/chatSessions/*.json",
+        "${DEJA_COPILOT_CHAT_ROOTS}"
+      ],
+      "format_kind": "json-or-jsonl",
+      "fixture_paths": [
+        "fixtures/registry/copilot-chat/workspaceStorage/a1b2c3d4e5f6/chatSessions/3b7e1f1b-0000-4000-8000-000000000000.jsonl",
+        "fixtures/registry/copilot-chat/workspaceStorage/a1b2c3d4e5f6/GitHub.copilot-chat/transcripts/7c9e2d2c-0000-4000-8000-000000000000.jsonl"
+      ],
+      "parser_source": "internal/sources/copilot_chat.go",
+      "last_verified": "2026-09-18",
+      "display_name": "VS Code Copilot Chat",
+      "capabilities": {
+        "mcp": true,
+        "auto": false,
+        "skill": true,
+        "command": true,
+        "resume": false,
+        "handoff": "paste",
+        "prereq": ""
+      },
+      "gaps": {
+        "auto": {
+          "state": "impossible",
+          "why": "VS Code Copilot Chat has no session-start or per-prompt hook, so there is nothing to install"
+        },
+        "resume": {
+          "state": "impossible",
+          "why": "sessions reopen from Chat: Show Chats in the editor, not a command deja can print"
+        }
+      }
+    },
+    {
+      "id": "cursor",
+      "store_paths": [
+        "~/Library/Application Support/Cursor/User/{globalStorage,workspaceStorage/*}/state.vscdb",
+        "~/.config/Cursor/User/{globalStorage,workspaceStorage/*}/state.vscdb",
+        "${CURSOR_CONFIG_DIR:-~/.cursor}/projects/**/agent-transcripts/**/*.jsonl",
+        "${DEJA_CURSOR_ROOT}",
+        "${DEJA_CURSOR_CLI_ROOT}"
+      ],
+      "format_kind": "sqlite-kv-or-jsonl",
+      "fixture_paths": [
+        "fixtures/registry/cursor/projects/registry-demo/agent-transcripts/registry-cursor.jsonl"
+      ],
+      "parser_source": "internal/sources/cursor.go",
+      "last_verified": "2026-07-17",
+      "display_name": "Cursor",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": "sqlite3 (IDE chats)"
+      },
+      "gaps": {}
+    },
+    {
+      "id": "deepseek",
+      "store_paths": [
+        "${DSH_HOME:-~/.dsh}/sessions/*/session-*/session.v3.jsonl.zstd",
+        "${DSH_HOME:-~/.dsh}/sessions/*/session-*/session.jsonl.zstd",
+        "${DSH_HOME:-~/.dsh}/sessions/*/session-*/session.jsonl",
+        "${DEJA_DEEPSEEK_ROOT}/*/session-*/session.v3.jsonl.zstd"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/deepseek/sessions/--work-pgbouncer-lab--/session-eaf5c9ac-0e47-4d2f-b982-8bae306062d1/session.jsonl"
+      ],
+      "parser_source": "internal/sources/deepseek.go",
+      "last_verified": "2026-08-21",
+      "display_name": "DeepSeek Harness",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": false,
+        "handoff": "paste",
+        "prereq": "zstd"
+      },
+      "gaps": {
+        "resume": {
+          "state": "impossible",
+          "why": "dsh ships two apps, headless and web; neither takes a session id. The launcher documents a tui profile that this release has no bundle for, and reopening a conversation is something the web UI sidebar does, not a command deja can print",
+          "source": "no resume flag in dsh 0.1.1-rc.2 headless or web"
+        }
+      }
+    },
+    {
+      "id": "gemini",
+      "store_paths": [
+        "${GEMINI_CLI_HOME:-~}/.gemini/tmp/*/chats/**/*.{json,jsonl}",
+        "${DEJA_GEMINI_ROOT}/tmp/*/chats/**/*.{json,jsonl}"
+      ],
+      "format_kind": "json-or-jsonl",
+      "fixture_paths": [
+        "fixtures/registry/gemini/session.jsonl",
+        "fixtures/registry/gemini/session-set-snapshot.jsonl"
+      ],
+      "parser_source": "internal/sources/gemini.go",
+      "last_verified": "2026-07-24",
+      "display_name": "Gemini CLI",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      },
+      "gaps": {}
+    },
+    {
+      "id": "goose",
+      "store_paths": [
+        "${GOOSE_PATH_ROOT}/data/sessions/sessions.db",
+        "~/Library/Application Support/Block/goose/sessions/*.jsonl",
+        "~/Library/Application Support/Block/goose/sessions/sessions.db",
+        "~/Library/Application Support/goose/sessions/sessions.db",
+        "~/.local/share/Block/goose/sessions/sessions.db",
+        "~/.local/share/goose/sessions/*.jsonl",
+        "~/.local/share/goose/sessions/sessions.db",
+        "${XDG_DATA_HOME}/goose/sessions/*.jsonl",
+        "${XDG_DATA_HOME}/goose/sessions/sessions.db",
+        "${DEJA_GOOSE_ROOT}/sessions/*.jsonl",
+        "${DEJA_GOOSE_ROOT}/sessions/sessions.db",
+        "${DEJA_GOOSE_DB}"
+      ],
+      "format_kind": "jsonl+sqlite",
+      "fixture_paths": [
+        "fixtures/registry/goose/sessions/20250724_1.jsonl",
+        "fixtures/registry/goose/sessions/goose.sql"
+      ],
+      "parser_source": "internal/sources/goose.go",
+      "last_verified": "2026-09-07",
+      "display_name": "Goose",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": "deja goose"
+      }
+    },
+    {
+      "id": "grok",
+      "store_paths": [
+        "${GROK_HOME:-~/.grok}/sessions/**/updates.jsonl",
+        "${DEJA_GROK_ROOT}/sessions/**/updates.jsonl",
+        "${GROK_HOME:-~/.grok}/grok.db"
+      ],
+      "format_kind": "acp-jsonl-with-json-metadata",
+      "fixture_paths": [
+        "fixtures/registry/grok/sessions/workspace%2Fregistry-demo/registry-grok/updates.jsonl"
+      ],
+      "parser_source": "internal/sources/grok.go",
+      "last_verified": "2026-08-24",
+      "display_name": "Grok Build",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": "sqlite3 (grok-dev store)"
+      },
+      "gaps": {}
+    },
+    {
+      "id": "hermes",
+      "store_paths": [
+        "~/.hermes/state.db",
+        "~/.hermes/profiles/*/state.db",
+        "${DEJA_HERMES_PROFILES_ROOT}/*/state.db",
+        "${DEJA_HERMES_DB}"
+      ],
+      "format_kind": "sqlite",
+      "fixture_paths": [
+        "fixtures/registry/hermes/profiles/architect/hermes.sql"
+      ],
+      "parser_source": "internal/sources/hermes.go",
+      "last_verified": "2026-07-28",
+      "display_name": "Hermes",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "paste",
+        "prereq": "sqlite3"
+      },
+      "gaps": {}
+    },
+    {
+      "id": "kimi",
+      "store_paths": [
+        "${KIMI_CODE_HOME:-~/.kimi-code}/sessions/*/*/agents/main/wire.jsonl",
+        "${DEJA_KIMI_ROOT}/sessions/*/*/agents/main/wire.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/kimi/sessions/wd_demo_0123456789ab/session_fixture01/agents/main/wire.jsonl"
+      ],
+      "parser_source": "internal/sources/kimi.go",
+      "last_verified": "2026-07-28",
+      "display_name": "Kimi Code",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      }
+    },
+    {
+      "id": "omp",
+      "store_paths": [
+        "${DEJA_OMP_ROOT:-~/.omp/agent/sessions}/**/*.jsonl",
+        "~/.omp/profiles/*/agent/sessions/**/*.jsonl",
+        "${XDG_DATA_HOME}/omp/sessions/**/*.jsonl",
+        "${XDG_DATA_HOME}/omp/profiles/*/sessions/**/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/omp/session.jsonl"
+      ],
+      "parser_source": "internal/sources/omp.go",
+      "last_verified": "2026-09-06",
+      "display_name": "omp (Oh My Pi)",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      },
+      "gaps": {}
+    },
+    {
+      "id": "openclaw",
+      "store_paths": [
+        "${OPENCLAW_STATE_DIR:-~/.openclaw}/agents/*/agent/openclaw-agent.sqlite",
+        "${OPENCLAW_STATE_DIR:-~/.openclaw}/agents/*/sessions/*.jsonl",
+        "${DEJA_OPENCLAW_ROOT}/*/agent/openclaw-agent.sqlite",
+        "${DEJA_OPENCLAW_ROOT}/*/sessions/*.jsonl"
+      ],
+      "format_kind": "sqlite-or-jsonl",
+      "fixture_paths": [
+        "fixtures/registry/openclaw/agent/openclaw-agent.sql",
+        "fixtures/registry/openclaw/agents/main/sessions/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d.jsonl"
+      ],
+      "parser_source": "internal/sources/openclaw.go",
+      "last_verified": "2026-09-02",
+      "display_name": "OpenClaw",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "paste",
+        "prereq": ""
+      },
+      "gaps": {}
+    },
+    {
+      "id": "opencode",
+      "store_paths": [
+        "~/.local/share/opencode/opencode.db",
+        "${XDG_DATA_HOME}/opencode/opencode.db",
+        "${DEJA_OPENCODE_DB}"
+      ],
+      "format_kind": "sqlite",
+      "fixture_paths": [
+        "fixtures/registry/opencode/opencode.sql"
+      ],
+      "parser_source": "internal/sources/opencode.go",
+      "last_verified": "2026-07-17",
+      "display_name": "opencode",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": "sqlite3"
+      }
+    },
+    {
+      "id": "continue",
+      "store_paths": [
+        "${CONTINUE_GLOBAL_DIR:-~/.continue}/sessions/*.json",
+        "${DEJA_CONTINUE_ROOT}/sessions/*.json"
+      ],
+      "format_kind": "json",
+      "fixture_paths": [
+        "fixtures/registry/continue/sessions/8f1c2a3e-0000-4000-8000-000000000000.json"
+      ],
+      "parser_source": "internal/sources/continuedev.go",
+      "last_verified": "2026-09-07",
+      "display_name": "Continue",
+      "capabilities": {
+        "mcp": true,
+        "auto": false,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "paste",
+        "prereq": ""
+      },
+      "gaps": {
+        "auto": {
+          "state": "blocked",
+          "why": "Continue's CLI carries a Claude-shaped hooks system — Claude's own event set, additionalContext, settings read from ~/.continue/settings.json — and nothing fires it in the published release: measured on @continuedev/cli 1.5.47, hooks written for every event loaded (\"Hooks loaded: 8 handler(s)\" in its own log) and no handler ran, while the same run's tool call went through. Becomes work the day a release fires them",
+          "source": "https://github.com/continuedev/continue/tree/main/extensions/cli/src/hooks"
+        }
+      }
+    },
+    {
+      "id": "crush",
+      "store_paths": [
+        "<project>/.crush/crush.db",
+        "~/.local/share/crush/projects.json",
+        "${XDG_DATA_HOME}/crush/projects.json",
+        "${DEJA_CRUSH_ROOT}/projects.json"
+      ],
+      "format_kind": "sqlite",
+      "fixture_paths": [
+        "fixtures/registry/crush/crush.sql"
+      ],
+      "parser_source": "internal/sources/crush.go",
+      "last_verified": "2026-09-07",
+      "display_name": "Crush",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": "sqlite3"
+      }
+    },
+    {
+      "id": "pi",
+      "store_paths": [
+        "${DEJA_PI_ROOT:-~/.pi/agent/sessions}/**/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/pi/session.jsonl"
+      ],
+      "parser_source": "internal/sources/pi.go",
+      "last_verified": "2026-09-06",
+      "display_name": "pi",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      }
+    },
+    {
+      "id": "prime",
+      "store_paths": [
+        "${DEJA_PRIME_ROOT:-~/.prime/agent/sessions}/**/*.jsonl",
+        "${PRIME_AGENT_SESSION_DIR}/**/*.jsonl",
+        "${PRIME_AGENT_CODING_AGENT_SESSION_DIR}/**/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/prime/session.jsonl"
+      ],
+      "parser_source": "internal/sources/prime.go",
+      "last_verified": "2026-08-30",
+      "display_name": "prime-agent (PrimeIntellect)",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      },
+      "gaps": {}
+    },
+    {
+      "id": "qwen",
+      "store_paths": [
+        "${DEJA_QWEN_ROOT:-~/.qwen}/projects/*/chats/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/qwen/projects/-workspace-registry-demo/chats/registry-qwen.jsonl"
+      ],
+      "parser_source": "internal/sources/qwen.go",
+      "last_verified": "2026-09-07",
+      "display_name": "Qwen Code",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      },
+      "gaps": {}
+    },
+    {
+      "id": "cherrystudio",
+      "store_paths": [
+        "~/Library/Application Support/CherryStudio/Data/Agents/.claude/projects/*/*.jsonl",
+        "%APPDATA%/CherryStudio/Data/Agents/.claude/projects/*/*.jsonl",
+        "${XDG_CONFIG_HOME}/CherryStudio/Data/Agents/.claude/projects/*/*.jsonl",
+        "<app data>/CherryStudio/.claude/projects/*/*.jsonl",
+        "${DEJA_CHERRYSTUDIO_ROOTS}/*/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/cherrystudio/projects/-workspace-registry-demo/registry-cherrystudio.jsonl"
+      ],
+      "parser_source": "internal/sources/cherrystudio.go",
+      "last_verified": "2026-09-17",
+      "display_name": "Cherry Studio",
+      "capabilities": {
+        "mcp": true,
+        "auto": false,
+        "skill": true,
+        "command": false,
+        "resume": false,
+        "handoff": "paste",
+        "prereq": "import the server once in Settings -> MCP; enable the skill for the agent"
+      },
+      "gaps": {
+        "auto": {
+          "state": "impossible",
+          "why": "Cherry Studio has no hook surface for a third party: it is an Electron app whose agent sessions run inside it, and the extension points are the MCP server list and its import paths (#3644)."
+        },
+        "command": {
+          "state": "impossible",
+          "why": "No slash-command surface for a third party: commands are the app's own and an MCP server cannot register one (#3644)."
+        },
+        "resume": {
+          "state": "impossible",
+          "why": "Cherry Studio has no command that reopens a session from outside: the sessions live in the desktop app and are picked from its own UI, so deja hands one over as a paste (#3644)."
+        }
+      }
+    },
+    {
+      "id": "senpi",
+      "store_paths": [
+        "${SENPI_CODING_AGENT_DIR:-~/.senpi/agent}/sessions/*/*.jsonl",
+        "${DEJA_SENPI_ROOT}/*/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/senpi/-workspace-senpi-demo/session.jsonl"
+      ],
+      "parser_source": "internal/sources/senpi.go",
+      "display_name": "Senpi",
+      "last_verified": "2026-09-17",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": "none"
+      },
+      "gaps": {}
+    },
+    {
+      "id": "gjc",
+      "store_paths": [
+        "${GJC_CODING_AGENT_DIR:-~/.gjc/agent}/sessions/*/*.jsonl",
+        "${DEJA_GJC_ROOT}/*/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/gjc/-workspace-gjc-demo/session.jsonl"
+      ],
+      "parser_source": "internal/sources/gjc.go",
+      "last_verified": "2026-09-17",
+      "display_name": "gajae-code",
+      "capabilities": {
+        "mcp": true,
+        "auto": false,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "paste",
+        "prereq": "none"
+      },
+      "gaps": {
+        "auto": {
+          "state": "todo",
+          "why": "Settled against the loader rather than the docs, which disagree: `resolveScopePaths` in packages/coding-agent/src/customization/types.ts puts the user-scope hooks at `<getAgentDir()>/hooks/<pre|post>`, so `~/.gjc/agent/hooks/pre` is the path and docs/hooks.md's `~/.gjc/hooks` is stale. What stops a hook being written there is the shape: a directory hook is a TypeScript module exporting `default (api) => api.on(\"tool_call\", …)`, and the only documented return is `{block, reason}` — allow or refuse, with no channel for adding context, which is what deja's tool hook exists to do. The lifecycle events (`session_start`, `before_agent_start`) come from the in-process HookAPI, which is the plugin surface rather than the directory, so auto-recall here is a gjc plugin and not a file (#3651).",
+          "source": "https://github.com/Yeachan-Heo/gajae-code/blob/main/docs/examples/gjc-hooks/pre/bash.ts"
+        }
+      }
+    },
+    {
+      "id": "kimchi",
+      "store_paths": [
+        "${KIMCHI_CODING_AGENT_DIR:-${XDG_CONFIG_HOME:-~/.config}/kimchi/harness}/sessions/--<encoded-cwd>--/*.jsonl",
+        "${DEJA_KIMCHI_ROOT}/**/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/kimchi/--workspace-kimchi-demo--/session.jsonl"
+      ],
+      "parser_source": "internal/sources/senpi.go",
+      "display_name": "Kimchi Coding",
+      "last_verified": "2026-09-17",
+      "capabilities": {
+        "mcp": true,
+        "auto": false,
+        "skill": false,
+        "command": false,
+        "resume": true,
+        "handoff": "paste",
+        "prereq": "none"
+      },
+      "gaps": {
+        "auto": {
+          "state": "blocked",
+          "why": "Kimchi can run the hooks `deja install claude` already writes, through a compatibility extension that ships disabled: `kimchi resources enable extensions.claude-code-hook-adapter`. That switch is the user's, so deja records it rather than claiming auto-recall (docs/hooks.md).",
+          "source": "https://github.com/getkimchi/kimchi/blob/main/docs/hooks.md"
+        },
+        "skill": {
+          "state": "blocked",
+          "why": "Same shape: `extensions.claude-code-skills` loads ~/.claude/skills — where deja already writes — and also ships disabled (#3651).",
+          "source": "https://github.com/getkimchi/kimchi/blob/main/docs/hooks.md"
+        },
+        "command": {
+          "state": "blocked",
+          "why": "In Kimchi a skill is the command: `extensions.claude-code-skills` contributes skills through Pi resource discovery so `/skill:<name>` works, and it ships disabled. So this is not a second file to write — it is the same switch the skill waits on, and a command file of our own would add an entry nothing reads (#3651).",
+          "source": "https://github.com/getkimchi/kimchi/blob/main/docs/hooks.md"
+        }
+      }
+    },
+    {
+      "id": "commandcode",
+      "store_paths": [
+        "~/.commandcode/projects/*/*.jsonl",
+        "${DEJA_COMMANDCODE_ROOT}/*/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/commandcode/-workspace-commandcode-demo/registry-commandcode.jsonl"
+      ],
+      "parser_source": "internal/sources/commandcode.go",
+      "display_name": "Command Code",
+      "last_verified": "2026-09-16",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": false,
+        "handoff": "paste",
+        "prereq": "none"
+      },
+      "gaps": {
+        "resume": {
+          "state": "unknown",
+          "why": "No resume flag is described by either integration that documents the rest of Command Code's surfaces, and the CLI is closed, so there is nothing to read one out of. A live install answers it in one `--help` (#3651)."
+        }
+      }
+    },
+    {
+      "id": "zcode",
+      "store_paths": [
+        "~/.zcode/projects/*/*.jsonl",
+        "${DEJA_ZCODE_ROOT}/*/*.jsonl",
+        "~/.zcode/cli/db/db.sqlite",
+        "${DEJA_ZCODE_DB}"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/zcode/-workspace-zcode-demo/registry-zcode.jsonl"
+      ],
+      "parser_source": "internal/sources/zcode.go",
+      "display_name": "ZCode",
+      "last_verified": "2026-09-17",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": false,
+        "command": false,
+        "resume": false,
+        "handoff": "paste",
+        "prereq": "sqlite3 for the CLI database"
+      },
+      "gaps": {
+        "skill": {
+          "state": "unknown",
+          "why": "Nothing found names a user-level skill directory for ZCode. Its extension surface, as inspected by the memory plugin that got there first, is the hook block and the server map in `~/.zcode/cli/config.json` plus a plugin manifest probe order; guidance therefore reaches the model through the MCP tool descriptions and the injected session block (#3651).",
+          "source": "https://github.com/volcengine/OpenViking/blob/main/examples/agent-hook-plugin/DESIGN.md"
+        },
+        "command": {
+          "state": "unknown",
+          "why": "Nothing found names a custom-command surface in ZCode. What is documented by a third party is its hook block and a strict HTTP-only server map, so the work here is auto-recall through the hooks rather than a command file (#3651)."
+        },
+        "resume": {
+          "state": "unknown",
+          "why": "The flag is real — `--resume <SESSION_ID>` appears in ZCode's headless contract, and the session id it takes is the one its JSON summary reports — but every documented invocation runs the app bundle's own Electron runtime with a mandatory `--prompt`, which is a turn rather than reopening a session for a person to continue. Whether the `zcode` launcher on PATH accepts the same flag on its own is unverified, and printing a command that needs a prompt would be worse than the paste (#3651).",
+          "source": "https://github.com/Q00/ouroboros/blob/main/docs/runtime-guides/zcode.md"
+        }
+      }
+    },
+    {
+      "id": "kiro",
+      "store_paths": [
+        "~/.kiro/sessions/cli/*.jsonl",
+        "~/.kiro/sessions/*/sess_*/messages.jsonl",
+        "${DEJA_KIRO_ROOT}/cli/*.jsonl",
+        "${DEJA_KIRO_ROOT}/*/sess_*/messages.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/kiro/cli/registry-kiro.jsonl",
+        "fixtures/registry/kiro/w-api/sess_00000000-0000-4000-8000-000000000000/messages.jsonl"
+      ],
+      "parser_source": "internal/sources/kiro.go",
+      "last_verified": "2026-09-17",
+      "display_name": "Kiro",
+      "capabilities": {
+        "mcp": true,
+        "auto": false,
+        "skill": false,
+        "command": false,
+        "resume": true,
+        "handoff": "paste",
+        "prereq": "none"
+      },
+      "gaps": {
+        "auto": {
+          "state": "todo",
+          "why": "Kiro's agent hooks are per-workspace and fire on file events (`.kiro/hooks/`), not before a prompt, so there is no session-start surface a global install can write. Its steering files (`.kiro/steering/*.md`) are the per-workspace channel and would need a per-project install (#3651)."
+        },
+        "skill": {
+          "state": "impossible",
+          "why": "Kiro has a user-level guidance channel and deja writes it — `~/.kiro/steering/deja.md`, the global half of steering, scanned for every project — but it is not a skill and calling it one would misdescribe what it costs. A steering document declares an inclusion mode, and the only mode measured as loaded by kiro-cli is `always`: `manual` is not loaded and cannot be invoked from a session, `fileMatch` was withheld (KiroCrew's steering reference, measured against 2.19.1). So the text rides in front of every turn whether it is wanted or not, which is why deja's file there is four lines rather than the skill it writes where one is loaded on demand — the same call aider's entry makes (#3651).",
+          "source": "https://github.com/kirodotdev/KiroCrew/blob/main/docs/reference/kiro-cli/steering.md"
+        },
+        "command": {
+          "state": "unknown",
+          "why": "Kiro's upstream — Amazon Q Developer CLI — keeps user-level custom prompts in `~/.aws/amazonq/prompts` (`crates/chat-cli/src/util/paths.rs`), but Kiro renamed its config tree rather than moving it wholesale: its server file is `~/.kiro/settings/mcp.json`, not the Q path. So the location of Kiro's equivalent cannot be inferred from the fork, and writing a guessed directory would leave a command nothing lists (#3651)."
+        }
+      }
+    },
+    {
+      "id": "kilocode",
+      "store_paths": [
+        "<vscode-globalStorage>/kilocode.kilo-code/tasks/*/api_conversation_history.json",
+        "${DEJA_KILO_ROOTS}/tasks/*/api_conversation_history.json",
+        "~/.local/share/kilo/kilo.db",
+        "${XDG_DATA_HOME}/kilo/kilo.db",
+        "${DEJA_KILO_DB}"
+      ],
+      "format_kind": "json+sqlite",
+      "fixture_paths": [
+        "fixtures/registry/kilocode/tasks/registry-kilocode/api_conversation_history.json",
+        "fixtures/registry/kilocode/kilo.sql"
+      ],
+      "parser_source": "internal/sources/kilo.go",
+      "last_verified": "2026-09-17",
+      "display_name": "Kilo Code",
+      "capabilities": {
+        "mcp": true,
+        "auto": false,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "paste",
+        "prereq": "sqlite3 for the CLI store"
+      },
+      "gaps": {
+        "auto": {
+          "state": "blocked",
+          "why": "Kilo Code has no hook surface: a search of Kilo-Org/kilocode finds none, and the extension is a Roo fork whose hooks are still in flight upstream (Roo PRs #10785, #11128, #11663). Recall arrives when the model calls the tool rather than on its own (#3643).",
+          "source": "https://github.com/RooCodeInc/Roo-Code/pull/11663"
+        }
+      }
+    },
+    {
+      "id": "roo",
+      "store_paths": [
+        "<vscode-globalStorage>/rooveterinaryinc.roo-cline/tasks/*/api_conversation_history.json",
+        "${DEJA_ROO_ROOTS}/tasks/*/api_conversation_history.json",
+        "~/.vscode-mock/global-storage/tasks/*/api_conversation_history.json"
+      ],
+      "format_kind": "json",
+      "fixture_paths": [
+        "fixtures/registry/roo/tasks/1767225700000/api_conversation_history.json"
+      ],
+      "parser_source": "internal/sources/roo.go",
+      "last_verified": "2026-09-07",
+      "display_name": "Roo Code",
+      "capabilities": {
+        "mcp": true,
+        "auto": false,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "paste",
+        "prereq": "roo CLI (editor tasks reopen in the editor)"
+      },
+      "gaps": {
+        "auto": {
+          "state": "blocked",
+          "why": "Roo's hooks are in flight upstream, not shipped: PR #10785 implements a Claude Code-style hooks system, #11128 is Hooks beta and #11663 Hooks phase 1, all still open, and no release names lifecycle hooks. A user's bug report about PreToolUse coverage (#10834) shows they work on a branch build. Becomes work the day one of those merges",
+          "source": "https://github.com/RooCodeInc/Roo-Code/pull/10785"
+        }
+      }
+    },
+    {
+      "id": "zed",
+      "store_paths": [
+        "~/Library/Application Support/Zed/threads/threads.db",
+        "${XDG_DATA_HOME}/zed/threads/threads.db",
+        "%LOCALAPPDATA%/Zed/threads/threads.db",
+        "${DEJA_ZED_ROOT}/threads/threads.db",
+        "${DEJA_ZED_DB}"
+      ],
+      "format_kind": "sqlite",
+      "fixture_paths": [
+        "fixtures/registry/zed/zed.sql"
+      ],
+      "parser_source": "internal/sources/zed.go",
+      "last_verified": "2026-08-21",
+      "display_name": "Zed",
+      "capabilities": {
+        "mcp": true,
+        "auto": false,
+        "skill": true,
+        "command": true,
+        "resume": false,
+        "handoff": "paste",
+        "prereq": "sqlite3 + zstd"
+      },
+      "gaps": {
+        "auto": {
+          "state": "impossible",
+          "why": "Zed's agent exposes no lifecycle hook: nothing runs before a prompt is sent, and the extension API covers language servers, slash commands, context servers and debuggers only, so there is no point at which recall could be injected. Becomes work the day Zed ships one",
+          "source": "no hook API in Zed 1.16.1 or extension API 0.7"
+        },
+        "resume": {
+          "state": "impossible",
+          "why": "The agent lives in the editor and no zed CLI flag reopens a thread by id, so there is nothing for deja to print. Reopening a thread is a thing the editor does, not a command",
+          "source": "no thread flag in the zed CLI of 1.16.1"
+        }
+      }
+    }
+  ]
+}

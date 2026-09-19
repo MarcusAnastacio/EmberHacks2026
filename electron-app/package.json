@@ -1,0 +1,17 @@
+{
+  "name": "emberhacks-quiz-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Reads your past AI agent conversations and turns one into an interactive quiz.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:fixtures": "COMPAT_FIXTURES=1 electron .",
+    "scan": "npm --prefix backend run scan",
+    "scan:fixtures": "npm --prefix backend run scan:fixtures",
+    "test": "npm --prefix backend test"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0"
+  }
+}

@@ -1,0 +1,26 @@
+{"kind":0,"v":{"version":3,"creationDate":1779938209302,"initialLocation":"panel","responderUsername":"GitHub Copilot","sessionId":"mocksession0reg4chat5vscode6oplog7fixture8","hasPendingEdits":false,"requests":[],"pendingRequests":[],"inputState":{"attachments":[],"mode":{"id":"agent","kind":"agent"},"selectedModel":{"identifier":"copilot/auto","metadata":{"id":"auto","vendor":"copilot","name":"Auto"}},"inputText":"","selections":[],"permissionLevel":"default"}}}
+{"kind":1,"k":["customTitle"],"v":"Connection pool exhaustion"}
+{"kind":2,"k":["pendingRequests"],"v":[{"id":"pending-1","message":{"text":"and the fix?"}}]}
+{"kind":3,"k":["pendingRequests"]}
+{"kind":2,"k":["requests"],"v":[{"requestId":"req-0","message":{"text":"why is the connection pool exhausted?","parts":[{"kind":"text","text":"why is the connection pool exhausted?"}]},"variableData":{"variables":[]},"response":[],"timestamp":1779938213302,"modelId":"copilot/auto","agent":{"id":"github.copilot.editingAgent","name":"GitHub Copilot"},"modeInfo":{"kind":"agent","modeInstructions":""}}]}
+{"kind":2,"k":["requests",0,"response"],"v":[{"value":"The pool is exhaust"}]}
+{"kind":2,"k":["requests",0,"response"],"i":0,"v":[{"value":"The pool is exhausted because each worker opens its own session."}]}
+{"kind":2,"k":["requests",0,"response"],"i":1,"v":[{"kind":"toolInvocationSerialized","toolCallId":"call_6","toolId":"copilot_readFile","invocationMessage":{"value":"Reading app/db.py"},"pastTenseMessage":{"value":"Read app/db.py"},"isComplete":true,"source":{"type":"internal"}}]}
+{"kind":2,"k":["requests",0,"response"],"i":2,"v":[{"value":"Found it. `db.py:41` opens a session per request but returns early on the error path without closing it."}]}
+{"kind":2,"k":["requests",0,"response"],"i":2,"v":[{"value":"Found it. `db.py:41` opens a session per request but returns early on the error path without closing it. Wrap it in a context manager."}]}
+{"kind":2,"k":["requests"],"v":[{"requestId":"req-1","message":{"text":"what does the context manager change?","parts":[{"kind":"text","text":"what does the context manager change?"}]},"variableData":{"variables":[]},"response":[],"timestamp":1779938249302,"modelId":"copilot/auto","agent":{"id":"github.copilot.editingAgent","name":"GitHub Copilot"},"modeInfo":{"kind":"agent","modeInstructions":""}}]}
+{"kind":2,"k":["requests",1,"response"],"i":0,"v":[{"value":"It commits on success and rolls back on any exception."}]}
+{"kind":2,"k":["requests",1,"response"],"i":0,"v":[{"value":"It commits on success and rolls back on any exception, then closes the session."}]}
+{"kind":2,"k":["requests",1,"response"],"i":1,"v":[{"kind":"toolInvocationSerialized","toolCallId":"call_44","toolId":"copilot_applyPatch","invocationMessage":{"value":"Editing app/db.py"},"pastTenseMessage":{"value":"Edited app/db.py"},"isComplete":true,"source":{"type":"internal"}}]}
+{"kind":2,"k":["requests",1,"response"],"i":2,"v":[{"value":"With a pool size of 20 that stops the leak from ever reaching the ceiling."}]}
+{"kind":2,"k":["requests"],"v":[{"requestId":"req-2","message":{"text":"can you also add a metric for in-use connections?","parts":[{"kind":"text","text":"can you also add a metric for in-use connections?"}]},"variableData":{"variables":[]},"response":[],"timestamp":1779938299302,"modelId":"copilot/auto","agent":{"id":"github.copilot.editingAgent","name":"GitHub Copilot"},"modeInfo":{"kind":"agent","modeInstructions":""}}]}
+{"kind":2,"k":["requests",2,"response"],"v":[{"value":"Yes - add a gauge next to the existing pool metrics:"}]}
+{"kind":1,"k":["requests",2,"modelState"],"v":{"value":3,"completedAt":1779938305302}}
+{"kind":2,"k":["requests",2,"response"],"i":1,"v":[{"value":"```python\npool_in_use.labels(shard=shard).set(pool.checkedout())\n```\nEmit it from the same poller that already reports pool size."}]}
+{"kind":2,"k":["requests"],"v":[{"requestId":"req-3","message":{"text":"why not just raise the pool size?","parts":[{"kind":"text","text":"why not just raise the pool size?"}]},"variableData":{"variables":[]},"response":[],"timestamp":1779938349302,"modelId":"copilot/auto","agent":{"id":"github.copilot.editingAgent","name":"GitHub Copilot"},"modeInfo":{"kind":"agent","modeInstructions":""}}]}
+{"kind":2,"k":["requests",3,"response"],"v":[{"value":"Raising the ceiling hides the leak instead of fixing it."}]}
+{"kind":2,"k":["requests",3,"response"],"i":0,"v":[{"value":"Raising the ceiling hides the leak instead of fixing it, and each connection costs a backend slot. The leak is bounded per worker, so the pool fills linearly with traffic rather than plateauing."}]}
+{"kind":1,"k":["requests",3,"hiddenFromTranscript"],"v":true}
+{"kind":3,"k":["requests",3,"hiddenFromTranscript"]}
+{"kind":1,"k":["inputState","inputText"],"v":"thanks, that fixed it"}
+{"kind":2,"k":["requests",0,"editedFileEvents"],"v":[{"uri":"file:///app/db.py","outcome":"success"}]}
