@@ -5,7 +5,7 @@ and turns it into an interactive quiz. This README covers **setup and startup** 
 the three processes fit together.
 
 The history-reading engine has its own document: [`backend/README.md`](backend/README.md).
-The UI has its own: [`renderer/README.md`](renderer/README.md).
+The UI has its own: [`frontend/README.md`](frontend/README.md).
 
 ---
 
@@ -21,7 +21,7 @@ The backend uses `node:sqlite` and `zlib.zstdDecompressSync`, both of which need
 Node. **Electron 44 or newer bundles Node 24**, which is why the dependency floor is where
 it is — an older Electron silently degrades every SQLite-based agent (Cursor, opencode,
 Goose, Crush, Zed) to "detected but unparsed".
-su
+
 Verify what your shell and your Electron actually give you:
 
 ```bash
@@ -47,7 +47,6 @@ will see):
 
 ```bash
 npm run scan              # scan this machine, print the table
-npm run scan -- --only copilot-chat --progress  # scan one harness with progress
 npm run scan:fixtures     # scan the bundled sample stores instead
 npm test                  # parser tests
 ```
@@ -120,21 +119,21 @@ electron-app/
 |---|---|---|---|
 | Main | `main.js` | Read the filesystem, own the catalog, register IPC | Touch the DOM |
 | Preload | `preload.js` | Expose a fixed set of channels on `window.compat` | Read the filesystem, hold state |
-| Renderer | `renderer/*` | Render, listen, ask | Read the filesystem, `require()` anything |
+| Frontend | `frontend/*` | Render, listen, ask | Read the filesystem, `require()` anything |
 
-**The rule:** the renderer never touches a file path and never learns an agent's storage
+**The rule:** the frontend never touches a file path and never learns an agent's storage
 layout. It asks for a list and asks for a conversation. All knowledge of where history
 lives stays in `backend/`.
 
 ```js
-// in the renderer
+// in the frontend
 const catalog = await window.compat.list()            // sidebar: agents + conversations
 const session = await window.compat.session(id)       // one conversation, with messages
 const payload = await window.compat.payload({ id })   // bounded, trimmed, ready for Gemini
 ```
 
 The channel list lives in two places that must stay in sync: `backend/ipc.js` (main side)
-and `preload.js` (renderer side). `preload.js` is intentionally *not* importing
+and `preload.js` (frontend side). `preload.js` is intentionally *not* importing
 `backend/ipc.js`, because it runs under `sandbox: true` where only `require('electron')`
 is available.
 
@@ -145,13 +144,28 @@ This order is deliberate — changing it produces "no handler registered" errors
 1. `await import('./backend/index.js')` — the backend is ESM; this file is CommonJS, so a
    dynamic `import()` is used rather than `require()`, which is not reliable for ESM inside
    Electron.
-2. `registerCompatibilityIpc(...)` — **before** any window exists, so the renderer can
+2. `registerCompatibilityIpc(...)` — **before** any window exists, so the frontend can
    never invoke an unwired channel.
 3. `new BrowserWindow(...)` and `loadFile(...)`.
-4. `layer.refresh()` on `did-finish-load`, with progress broadcast to the renderer.
+4. `layer.refresh()` on `did-finish-load`, with progress broadcast to the frontend.
 
-The renderer also calls `refresh()` on mount. The layer de-duplicates concurrent scans, so
-step 4 and the renderer's own call collapse into one scan.
+The frontend also calls `refresh()` on mount. The layer de-duplicates concurrent scans, so
+step 4 and the frontend's own call collapse into one scan.
+
+### Why the page is served from `app://` and not `file://`
+
+Step 3 loads `app://bundle/index.html` from a custom scheme registered with
+`protocol.registerSchemesAsPrivileged({ standard: true, secure: true })`, and a
+`protocol.handle('app', …)` handler serves files out of `frontend/`, refusing anything that
+resolves outside that directory.
+
+This is load-bearing, not cosmetic. A `file://` page has a **null origin**, so the CSP
+directive `script-src 'self'` matches nothing — which means `<script type="module">` is
+refused, **silently**. The HTML renders, the module never runs, the sidebar stays empty, and
+there is no error to search for. Registering a real origin makes `'self'` meaningful, so ES
+modules work while the CSP stays strict (`default-src 'none'`).
+
+If you ever change `loadURL` back to `loadFile`, every `import` in `frontend/` breaks.
 
 ---
 
@@ -160,8 +174,8 @@ step 4 and the renderer's own call collapse into one scan.
 `webPreferences` is locked down, and the history being read is sensitive:
 
 ```js
-contextIsolation: true     // renderer JS cannot reach the preload's scope
-nodeIntegration: false     // no require() in the renderer
+contextIsolation: true     // frontend JS cannot reach the preload's scope
+nodeIntegration: false     // no require() in the frontend
 sandbox: true              // preload is limited to require('electron')
 ```
 
@@ -183,19 +197,23 @@ the **Show Gemini payload** button are how to inspect exactly what would leave t
   (`backend/README.md` has the full table and the honest gaps).
 - Sidebar grouped by agent, filterable, with a live scan-progress line.
 - Selecting a conversation renders the full transcript, with tool calls labelled per turn.
+- **Secret redaction** on the way out — 29 pattern kinds (private keys, JWTs, bearer
+  tokens, provider tokens, credentials in connection strings, `.env` lines, prose). The
+  payload view reports what was stripped, per kind.
 - **Show Gemini payload** — the exact bounded JSON the quiz generator will be given, with
-  its character count and truncation flag.
-- Focus prompt plus **Generate quiz** — Gemini returns validated multiple-choice questions;
-  the renderer tracks answers and shows a score.
+  its byte count, truncation flag and redaction report.
 - `npm run scan:fixtures` → 33 of 36 agents producing parsed sessions on any machine.
 
 **Not built yet**
 
-- **Redaction.** `backend/detect.js` → `toQuizPayload()` is the single choke point where a
-  conversation leaves the machine, and it does not scrub secrets today. Transcripts contain
-  API keys, tokens and `.env` contents, so this must be added before anything is sent to
-  Gemini — see the note at the end of `backend/README.md`.
+- Quiz generation. `Generate quiz` is disabled, and the payload is the seam it will use.
+- Quiz rendering. The main panel currently shows the transcript; that view is the
+  placeholder to replace.
 
+Proposed design for all of the above — the Gemini response schema for MCQ / open-ended /
+fill-in-the-blank, quiz storage and how to tell when a transcript has changed under a
+generated quiz, and how to fit a 7 MB conversation into a bounded prompt — is in
+[`docs/quiz-design.md`](docs/quiz-design.md).
 ---
 
 ## Troubleshooting
@@ -207,4 +225,6 @@ the **Show Gemini payload** button are how to inspect exactly what would leave t
 | Sidebar shows agents but no conversations | Correct behaviour, not a bug. It means those agents are installed, but the specific stores hold no messages. VS Code Copilot Chat is the usual culprit: it writes a session file the moment the chat panel opens, so empty sessions are common. See `backend/README.md`. |
 | Every SQLite agent says "detected but unparsed" | The Electron/Node version is too old for `node:sqlite`. The app reports this in the sidebar summary line. Upgrade Electron. |
 | Blank window | Check the terminal for a thrown error, or launch with `COMPAT_DEVTOOLS=1 npm start`. |
+| HTML renders but nothing is interactive and no error appears | The modules were refused. The page is not being served from `app://` — see "Why the page is served from app://" above. |
+| `Cannot use import statement outside a module` | `frontend/index.html` lost `type="module"` on the `renderer.js` script tag. |
 | `ELECTRON_DISABLE_SANDBOX` / sandbox errors on Linux | Run `npx electron --no-sandbox .`, or use `xvfb-run -a` when there is no display. |

@@ -57,6 +57,110 @@ if (flag('--show')) {
   process.exit(0);
 }
 
+if (flag('--digest')) {
+  const d = layer.digest(flag('--digest'), {
+    project: !has('--no-project'),
+    budget: flag('--digest-budget') ? { total: Number(flag('--digest-budget')) } : undefined,
+  });
+  if (!d) {
+    console.error('not found');
+    process.exit(1);
+  }
+  console.log(d.text);
+  console.error(`\n--- digest stats: ${JSON.stringify(d.stats)}\n--- sections: ${JSON.stringify(d.sections)}`);
+  process.exit(0);
+}
+
+if (flag('--topics')) {
+  const id = flag('--topics');
+  const slices = has('--slices');
+  const result = slices
+    ? layer.topicSlices(id, { maxChars: Number(flag('--slice-chars', 12000)) })
+    : layer.topics(id, { maxTopics: Number(flag('--max-topics', 14)) });
+  if (!result) {
+    console.error('not found');
+    process.exit(1);
+  }
+  if (flag('--slice')) {
+    const which = flag('--slice');
+    const slice = layer.topicSlice(id, which, { maxChars: Number(flag('--slice-chars', 12000)) });
+    if (!slice) {
+      console.error('no such topic');
+      process.exit(1);
+    }
+    console.log(slice.text);
+    console.error(`\n--- slice ${slice.topicId} "${slice.label}" — ${slice.chars} chars (capped), truncated ${slice.truncated}\n--- files: ${slice.files.join(', ') || 'none'}\n--- tools: ${slice.tools.map((t) => t.name + '×' + t.count).join(', ')}`);
+    process.exit(0);
+  }
+  console.log(`${'ID'.padEnd(4)}${'SCORE'.padStart(7)}  ${'EXCH'.padStart(5)}  ${'CHARS'.padStart(8)}  ${'FILES'.padStart(5)}  LABEL`);
+  for (const t of result.topics) {
+    console.log(
+      `${t.id.padEnd(4)}${String(t.score).padStart(7)}  ${String(t.exchanges).padStart(5)}  ` +
+        `${String(t.chars).padStart(8)}  ${String(t.files.length).padStart(5)}  ${t.label.slice(0, 64)}`,
+    );
+  }
+  console.error(`\n--- topics stats: ${JSON.stringify(result.stats)}`);
+  if (slices) console.error(`--- slices: ${JSON.stringify(result.slices.map((s) => ({ id: s.topicId, chars: s.chars, truncated: s.truncated })))}`);
+  process.exit(0);
+}
+
+if (has('--models')) {
+  const list = await layer.listModels();
+  const chain = (await import('./lib/gemini.js')).DEFAULT_MODEL_CHAIN;
+  console.log('key present:', layer.hasApiKey() ? 'yes' : 'NO');
+  console.log('default chain:', chain.join(' -> '));
+  console.log('reachable:', list.length, 'models');
+  process.exit(0);
+}
+
+if (flag('--quiz')) {
+  const id = flag('--quiz');
+  const types = flag('--types') === undefined
+    ? ['mcq', 'cloze', 'open']
+    : flag('--types').split(',').map((t) => t.trim()).filter(Boolean);
+  const options = {
+    questionCount: Number(flag('--questions', 6)),
+    types,
+    seed: flag('--seed') === undefined ? null : Number(flag('--seed')),
+    models: flag('--model') ? [flag('--model')] : undefined,
+  };
+
+  if (has('--plan')) {
+    const plan = layer.planQuiz(id, options);
+    if (!plan) {
+      console.error('not found');
+      process.exit(1);
+    }
+    console.log(`questionCount ${plan.questionCount}  types [${plan.types.join(', ') || 'none'}]  topics ${plan.selectedTopics.length}/${plan.topicStats.topics}`);
+    console.log(`will produce: ${plan.expectedFlashcards} flashcards, ${plan.expectedQuestions} questions`);
+    for (const t of plan.selectedTopics) console.log(`  ${t.id}  ${t.score}  ${t.chars} chars  ${t.label.slice(0, 56)}`);
+    console.log(`deck: ${JSON.stringify(plan.deck)}`);
+    process.exit(0);
+  }
+
+  process.stderr.write(`generating: ${options.questionCount} questions [${types.join(',') || 'none'}] from up to ${options.questionCount ? Math.ceil(options.questionCount / Math.max(1, types.length)) : 1} topics\n`);
+  const quiz = await layer.generateQuiz(id, {
+    ...options,
+    onProgress: (e) => {
+      if (e.phase === 'topic-start') process.stderr.write(`  ${e.topicId} ${String(e.sliceChars).padStart(6)} chars  ${e.label.slice(0, 50)}\n`);
+      if (e.phase === 'topic-done') process.stderr.write(`  ${e.topicId} done via ${e.model}: ${e.flashcards} cards, ${e.questions} questions\n`);
+      if (e.phase === 'topic-failed') process.stderr.write(`  ${e.topicId} FAILED: ${e.error}\n`);
+    },
+  });
+
+  if (!quiz || !quiz.ok) {
+    console.error(`generation failed: ${quiz?.message || 'not found'}`);
+    process.exit(1);
+  }
+  if (flag('--out')) {
+    const fs = await import('node:fs');
+    fs.writeFileSync(flag('--out'), JSON.stringify(quiz, null, 2));
+    process.stderr.write(`wrote ${flag('--out')}\n`);
+  }
+  console.log(JSON.stringify(quiz, null, has('--compact') ? 0 : 2));
+  process.exit(0);
+}
+
 if (flag('--payload')) {
   console.log(JSON.stringify(layer.quizPayload(flag('--payload')), null, 2));
   process.exit(0);

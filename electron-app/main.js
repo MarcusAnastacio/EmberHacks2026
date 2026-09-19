@@ -12,10 +12,55 @@
 // does not reliably support require()-of-ESM, so dynamic import is the safe path.
 
 const path = require('node:path');
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const fs = require('node:fs');
+const { pathToFileURL } = require('node:url');
+const { app, BrowserWindow, ipcMain, shell, protocol, net } = require('electron');
+
+/**
+ * Load a .env into process.env at startup.
+ *
+ * Kept from the frontend branch. lib/gemini.js reads a .env itself, so this is not
+ * required for generation — but it means `hasApiKey()` is accurate as soon as the window
+ * opens, which is what the settings UI needs to decide whether to ask for a key.
+ * Existing environment variables always win.
+ */
+function loadLocalEnv() {
+  for (const file of [path.join(__dirname, '.env'), path.join(__dirname, '..', '.env')]) {
+    if (!fs.existsSync(file)) continue;
+    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (match && !process.env[match[1]]) process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, '');
+    }
+  }
+}
 
 const FIXTURES = process.env.COMPAT_FIXTURES === '1';
+
+const FRONTEND_DIR = path.join(__dirname, 'frontend');
+
+// The frontend is served from a custom `app://` scheme instead of `file://`.
+//
+// Why this is necessary rather than cosmetic: a `file://` page has a null origin,
+// so the CSP directive `script-src 'self'` matches nothing and Chromium refuses
+// every ES module import — silently. The module never runs and no error appears
+// in the UI, which is a genuinely hard failure to debug. Serving from a real
+// origin makes `'self'` meaningful, so `type="module"` works while the CSP stays
+// strict. It also gives components a stable base for relative imports.
+//
+// `registerSchemesAsPrivileged` must run before the app is ready.
+const APP_SCHEME = 'app';
+const APP_ORIGIN = `${APP_SCHEME}://bundle`;
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: APP_SCHEME,
+    privileges: {
+      standard: true,   // gives it an origin, which is the whole point
+      secure: true,     // treated as a secure context
+      supportFetchAPI: true,
+    },
+  },
+]);
 
 /** @type {import('./backend/index.js').CompatibilityLayer | null} */
 let layer = null;
@@ -47,6 +92,19 @@ async function bootstrap() {
     getWindows: () => BrowserWindow.getAllWindows(),
   });
 
+  // Serve frontend/ over app://. Anything outside the directory is refused so a
+  // malformed URL cannot walk up into the rest of the app or the user's disk.
+  protocol.handle(APP_SCHEME, (request) => {
+    const url = new URL(request.url);
+    const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+    const target = path.normalize(path.join(FRONTEND_DIR, relative));
+
+    if (!target.startsWith(FRONTEND_DIR + path.sep) && target !== FRONTEND_DIR) {
+      return new Response('Forbidden', { status: 403 });
+    }
+    return net.fetch(pathToFileURL(target).toString());
+  });
+
   // 3. window
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -63,7 +121,7 @@ async function bootstrap() {
     },
   });
 
-  await mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  await mainWindow.loadURL(`${APP_ORIGIN}/index.html`);
 
   if (process.env.COMPAT_DEVTOOLS === '1') mainWindow.webContents.openDevTools();
 

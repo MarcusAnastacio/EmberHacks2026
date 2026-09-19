@@ -6,14 +6,15 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { expandStorePath, globStorePaths, walkFiles, HOME, PLATFORM, PLATFORM_NAME, platformRoots } from './lib/expand.js';
 import { readStoreFile } from './readers/index.js';
 import { sqliteAvailable, sqliteUnavailableReason } from './readers/sqlite.js';
-import { EXTRA_HARNESSES } from './registry.extras.js';
+import { EXTRA_HARNESSES, EXTRA_STORE_PATHS } from './registry.extras.js';
 
 const REGISTRY_URL = new URL('./registry.json', import.meta.url);
-export const FIXTURE_ROOT = new URL('./fixtures', import.meta.url).pathname;
+export const FIXTURE_ROOT = fileURLToPath(new URL('./fixtures', import.meta.url));
 
 /**
  * Fixture mode: point every harness at the vendored sample stores instead of
@@ -42,7 +43,17 @@ function fixtureFilesFor(id) {
 export function loadRegistry() {
   const data = JSON.parse(fs.readFileSync(REGISTRY_URL, 'utf8'));
   const seen = new Set(data.harnesses.map((h) => h.id));
-  return [...data.harnesses, ...EXTRA_HARNESSES.filter((h) => !seen.has(h.id))];
+
+  // Fold the platform-specific extra paths into the entries they belong to, so a
+  // Windows location shows up under the agent's existing row instead of as a second
+  // row with the same name.
+  const merged = data.harnesses.map((h) => {
+    const extra = EXTRA_STORE_PATHS[h.id];
+    if (!extra || !extra.length) return h;
+    return { ...h, store_paths: [...(h.store_paths || []), ...extra] };
+  });
+
+  return [...merged, ...EXTRA_HARNESSES.filter((h) => !seen.has(h.id))];
 }
 
 /** How many user turns / characters a session needs before a quiz is worth it. */

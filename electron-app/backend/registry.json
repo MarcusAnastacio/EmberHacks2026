@@ -212,6 +212,8 @@
       "store_paths": [
         "<vscode-User>/workspaceStorage/*/chatSessions/*.{json,jsonl}",
         "<vscode-User>/workspaceStorage/*/GitHub.copilot-chat/transcripts/*.jsonl",
+        "<vscode-data>/agentSessionData/*/session.db",
+        "<vscode-User>/globalStorage/github.copilot-chat/session-store.db",
         "<vscode-User>/globalStorage/emptyWindowChatSessions/*.{json,jsonl}",
         "<vscode-data>/agentSessionData/*/session.db",
         "<vscode-User>/globalStorage/github.copilot-chat/session-store.db",

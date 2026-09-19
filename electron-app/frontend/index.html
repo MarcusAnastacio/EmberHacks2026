@@ -65,13 +65,15 @@
             </div>
           </header>
           <section class="prompt-card">
-            <label for="quiz-prompt">What should this quiz focus on?</label>
-            <textarea id="quiz-prompt" rows="2" placeholder="e.g. Test me on the architectural decisions and bugs we fixed"></textarea>
+            <!-- Built from compat.quizCapabilities(), so no bound or label is duplicated
+                 here. The visual container is unchanged. -->
+            <div id="settings"></div>
             <div class="prompt-card__foot">
-              <span>Uses the selected transcript · stays on your machine until generation</span>
-              <span id="prompt-count">0 / 240</span>
+              <span>Uses the selected transcript · secrets are redacted before sending</span>
+              <span id="prompt-count"></span>
             </div>
           </section>
+          <div id="staleness"></div>
           <div class="session__messages" id="messages"></div>
         </article>
 
@@ -100,6 +102,9 @@
       </main>
     </div>
 
-    <script src="renderer.js"></script>
+    <!-- type="module": app.js imports lib/ and components/. Works because main.js serves
+         this page over the app:// scheme; over file:// the origin is null and
+         script-src 'self' would refuse the imports silently. -->
+    <script type="module" src="app.js"></script>
   </body>
 </html>

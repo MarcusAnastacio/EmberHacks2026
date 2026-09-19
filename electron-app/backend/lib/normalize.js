@@ -32,13 +32,16 @@ import { deriveTitle } from './text.js';
  * @property {boolean} [partial]      parsed, but some turns were undecodable
  */
 
-export function makeMessage({ role, text, ts, tools }) {
+export function makeMessage({ role, text, ts, tools, thinkingChars }) {
   const clean = typeof text === 'string' ? text.trim() : '';
   return {
     role: normalizeRole(role),
     text: clean,
     ...(Number.isFinite(ts) && ts > 0 ? { ts } : {}),
     ...(tools && tools.length ? { tools } : {}),
+    // Reasoning is excluded from `text` in contentToParts(); only the size is
+    // carried, so the UI and the digest can say how much was left out.
+    ...(thinkingChars > 0 ? { thinkingChars } : {}),
   };
 }
 
@@ -47,7 +50,12 @@ export function normalizeRole(role) {
   if (r === 'human' || r === 'user' || r === 'input') return 'user';
   if (r === 'assistant' || r === 'ai' || r === 'model' || r === 'output' || r === 'bot') return 'assistant';
   if (r === 'system' || r === 'developer') return 'system';
-  if (r === 'tool' || r === 'tool_result' || r === 'function') return 'tool';
+  // 'toolResult' is pi's spelling, and an unrecognised role used to fall through
+  // to 'assistant', which silently promoted megabytes of raw tool output — file
+  // dumps, directory listings, test logs — into the conversation.
+  if (r === 'tool' || r === 'toolresult' || r === 'tool_result' || r === 'tool-call' || r === 'function') {
+    return 'tool';
+  }
   return 'assistant';
 }
 
@@ -71,19 +79,30 @@ export function toEpochMs(value) {
  * Returns null when nothing usable was parsed, so callers can skip the file.
  */
 export function finalizeSession(input) {
-  const messages = (input.messages || [])
+  const all = (input.messages || [])
     .map((m) => (m && typeof m === 'object' && 'text' in m ? m : makeMessage(m)))
     .filter((m) => m.text && m.text.length > 0);
+
+  // Tool output is kept out of the transcript by default. It is the overwhelming
+  // majority of the bytes in a coding session (measured: 98% of an 11M-character
+  // pi session) and it is almost never what a quiz should ask about. What matters
+  // is THAT a tool ran, which is preserved as a count and on the assistant turn
+  // that called it. Pass keepToolOutput to retain the bodies.
+  const toolMessages = all.filter((m) => m.role === 'tool');
+  const kept = input.keepToolOutput ? all : all.filter((m) => m.role !== 'tool');
 
   // Consecutive same-role turns are common after a tool call is dropped; merge
   // them so the quiz sees one coherent turn per speaker.
   const merged = [];
-  for (const m of messages) {
+  for (const m of kept) {
     const prev = merged[merged.length - 1];
-    if (prev && prev.role === m.role && prev.tools?.length === m.tools?.length) {
+    if (prev && prev.role === m.role && !prev.tools?.length && !m.tools?.length) {
       prev.text = `${prev.text}\n\n${m.text}`;
       prev.ts = prev.ts ?? m.ts;
-      if (m.tools) prev.tools = [...(prev.tools || []), ...m.tools];
+    } else if (prev && prev.role === m.role && prev.tools?.length && m.tools?.length) {
+      prev.text = `${prev.text}\n\n${m.text}`;
+      prev.tools = [...prev.tools, ...m.tools];
+      prev.ts = prev.ts ?? m.ts;
     } else {
       merged.push({ ...m });
     }
@@ -98,6 +117,12 @@ export function finalizeSession(input) {
 
   const chars = merged.reduce((n, m) => n + m.text.length, 0);
   const userTurns = merged.filter((m) => m.role === 'user').length;
+  // Invocations, not results: this is what the digest reports, because the tool
+  // name and its arguments are the signal and the output body is not.
+  const toolCalls = merged.reduce((n, m) => n + (m.tools?.length || 0), 0);
+  // Reasoning dropped during extraction. Reported so the digest can be honest
+  // about how much of the session it is not showing.
+  const reasoningChars = merged.reduce((n, m) => n + (m.thinkingChars || 0), 0);
 
   const firstUser = merged.find((m) => m.role === 'user');
   const title = input.title || deriveTitle(firstUser?.text) || 'Untitled session';
@@ -119,6 +144,9 @@ export function finalizeSession(input) {
     messages: merged,
     userTurns,
     chars,
+    toolCalls,
+    toolResults: toolMessages.length,
+    reasoningChars,
     ...(input.partial ? { partial: true } : {}),
   };
 }

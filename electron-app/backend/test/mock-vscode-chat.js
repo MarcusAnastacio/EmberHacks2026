@@ -25,11 +25,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 
 import { readStoreFile } from '../readers/index.js';
 
-const HERE = path.dirname(new URL(import.meta.url).pathname);
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 // Reproduce the real on-disk layout, not just the file:
 //   <root>/workspaceStorage/<hash>/workspace.json          <- workspace identity

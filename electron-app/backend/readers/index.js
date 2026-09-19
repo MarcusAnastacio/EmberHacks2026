@@ -77,6 +77,15 @@ export function readStoreFile(file, ctx) {
   const ext = path.extname(file).toLowerCase();
   const kind = ctx.formatKind || '';
 
+  // Extensions that are always read as text, whatever the registry says the store's
+  // format is. Cursor declares "sqlite-kv-or-jsonl" because the IDE keeps a SQLite
+  // KV store AND writes agent transcripts as JSONL, so the declared kind alone sent
+  // `.jsonl` files to the SQLite reader — which cannot open them and emitted a
+  // placeholder instead of the conversation.
+  const TEXT_EXTS = new Set(['.jsonl', '.ndjson', '.json', '.md', '.markdown', '.txt', '.sql']);
+  const SQLITE_EXT = /\.(db|sqlite|sqlite3|vscdb)$/i;
+  const isSqliteStore = SQLITE_EXT.test(basename) || (kind.startsWith('sqlite') && !TEXT_EXTS.has(ext));
+
   const inferred = inferWorkspace(file);
 
   /**
@@ -106,7 +115,7 @@ export function readStoreFile(file, ctx) {
     return { sessions: [], detectedOnly: true };
   }
 
-  if (/\.(db|sqlite|sqlite3|vscdb)$/i.test(basename) || kind.startsWith('sqlite')) {
+  if (isSqliteStore) {
     const sessions = readSqlite(file, {
       ...ctx,
       path: file,

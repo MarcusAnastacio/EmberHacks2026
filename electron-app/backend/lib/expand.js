@@ -26,34 +26,118 @@ export const PLATFORM_NAME = PLATFORM === 'win32'
       ? 'linux'
       : PLATFORM;
 
-const isWin = PLATFORM === 'win32';
+/**
+ * The platform is an INPUT, not an ambient fact.
+ *
+ * Every Windows-specific rule here is reachable from a test by passing
+ * `{ platform: 'win32', env: {...} }`, which is the only way to verify this code
+ * without a Windows machine. Anything that reads `process.platform` directly is
+ * untestable, so nothing below does.
+ */
+export function platformContext(overrides = {}) {
+  const platform = overrides.platform || process.platform;
+  const env = overrides.env || process.env;
+  const isWin = platform === 'win32';
+  const home =
+    overrides.home ||
+    (isWin
+      ? env.USERPROFILE || (env.HOMEDRIVE && env.HOMEPATH ? `${env.HOMEDRIVE}${env.HOMEPATH}` : null)
+      : env.HOME) ||
+    os.homedir();
+  return { platform, env, isWin, home, darwin: platform === 'darwin' };
+}
 
-/** Concrete roots used by agent applications on the current operating system. */
-export function platformRoots() {
-  if (isWin) {
+/**
+ * Normalise separators to forward slashes.
+ *
+ * Every path this module produces is normalised, including on Windows. Windows
+ * accepts `/` in every filesystem call, whereas a glob pattern containing a
+ * backslash is ambiguous — minimatch treats it as an escape — so a
+ * mixed-separator glob pattern is the risky form, not a forward-slash one.
+ */
+export function toPosix(p) {
+  return String(p).replace(/\\/g, '/').replace(/\/+/g, '/');
+}
+
+/**
+ * Fold a path for comparison.
+ *
+ * Separators are normalised always, and the result is lowercased on Windows because
+ * its filesystem is case-insensitive: a tool that reports `C:\Proj\Src\db.ts`
+ * refers to the same file as a transcript that recorded `c:\proj\src\db.ts`, and
+ * exact matching treated them as different files.
+ */
+export function foldPath(value, { caseInsensitive = process.platform === 'win32' } = {}) {
+  const posix = toPosix(value);
+  return caseInsensitive ? posix.toLowerCase() : posix;
+}
+
+/**
+ * Make a tool-reported path relative to the session's working directory.
+ *
+ * Handles the forms an agent actually emits: an absolute POSIX path, a Windows path
+ * with a drive letter or a UNC prefix, a `./` or `.\` relative path, and a bare
+ * relative path. Returns null when the value does not look like a path in this repo
+ * at all.
+ */
+export function relativeToRoot(value, root, options = {}) {
+  if (typeof value !== 'string') return null;
+  let p = value.trim().replace(/^["']|["']$/g, '');
+  if (!p || p.length > 400 || /[\n\r]/.test(p)) return null;
+
+  const folded = foldPath(p, options);
+  const foldedRoot = root ? foldPath(toPosix(root).replace(/\/+$/, ''), options) : null;
+
+  if (foldedRoot && folded.startsWith(`${foldedRoot}/`)) {
+    // Drop the root and the separator that joined it to the remainder, so what is
+    // left is relative rather than a path starting with `/`.
+    p = p.slice(root.replace(/[\\/]+$/, '').length).replace(/^[\\/]+/, '');
+  } else if (foldedRoot && folded === foldedRoot) {
+    return null;
+  }
+
+  // Absolute-ness is checked BEFORE leading separators are stripped. Otherwise a UNC
+  // path (`\\\\server\\share\\file.ts`, which normalises to `//server/share/file.ts`)
+  // lost its leading slashes and became the relative path `server/share/file.ts`
+  // inside the project.
+  if (/^[\\/]/.test(p) || /^[A-Za-z]:[\\/]/.test(p)) return null;
+
+  p = p.replace(/^[.][\\/]/, '');
+  if (!p || p === '.' || p.startsWith('..')) return null;
+  return toPosix(p);
+}
+
+/**
+ * Concrete per-OS roots, surfaced through the catalog so the UI can say where it is
+ * looking. Kept from the frontend branch, but taking a context so it is testable:
+ * the ambient version could only be exercised on the platform it was written for.
+ */
+export function platformRoots(overrides = {}) {
+  const ctx = platformContext(overrides);
+  if (ctx.isWin) {
     return {
-      home: HOME,
-      appData: process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'),
-      localAppData: process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'),
-      config: process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'),
-      data: process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'),
+      home: ctx.home,
+      appData: ctx.env.APPDATA || path.join(ctx.home, 'AppData', 'Roaming'),
+      localAppData: ctx.env.LOCALAPPDATA || path.join(ctx.home, 'AppData', 'Local'),
+      config: ctx.env.APPDATA || path.join(ctx.home, 'AppData', 'Roaming'),
+      data: ctx.env.LOCALAPPDATA || path.join(ctx.home, 'AppData', 'Local'),
     };
   }
-  if (PLATFORM === 'darwin') {
+  if (ctx.darwin) {
     return {
-      home: HOME,
-      appData: path.join(HOME, 'Library', 'Application Support'),
-      localAppData: path.join(HOME, 'Library', 'Caches'),
-      config: path.join(HOME, 'Library', 'Preferences'),
-      data: path.join(HOME, 'Library', 'Application Support'),
+      home: ctx.home,
+      appData: path.join(ctx.home, 'Library', 'Application Support'),
+      localAppData: path.join(ctx.home, 'Library', 'Caches'),
+      config: path.join(ctx.home, 'Library', 'Preferences'),
+      data: path.join(ctx.home, 'Library', 'Application Support'),
     };
   }
   return {
-    home: HOME,
-    appData: process.env.XDG_DATA_HOME || path.join(HOME, '.local', 'share'),
-    localAppData: path.join(HOME, '.cache'),
-    config: process.env.XDG_CONFIG_HOME || path.join(HOME, '.config'),
-    data: process.env.XDG_DATA_HOME || path.join(HOME, '.local', 'share'),
+    home: ctx.home,
+    appData: ctx.env.XDG_DATA_HOME || path.join(ctx.home, '.local', 'share'),
+    localAppData: path.join(ctx.home, '.cache'),
+    config: ctx.env.XDG_CONFIG_HOME || path.join(ctx.home, '.config'),
+    data: ctx.env.XDG_DATA_HOME || path.join(ctx.home, '.local', 'share'),
   };
 }
 
@@ -79,22 +163,22 @@ export const isMissing = (p) => typeof p === 'string' && p.includes(MISSING);
  * Resolve one `${NAME}` / `${NAME:-default}` / `%NAME%` token.
  * `raw` is the inside of the braces, e.g. "CODEX_HOME:-~/.codex".
  */
-function resolveVar(raw) {
+function resolveVar(raw, ctx) {
   const sep = raw.indexOf(':-');
   const name = (sep === -1 ? raw : raw.slice(0, sep)).trim();
   const fallback = sep === -1 ? '' : raw.slice(sep + 2);
-  const value = process.env[name];
+  const value = ctx.env[name];
   if (value !== undefined && value !== '') return value;
   // The fallback may itself contain templates, so recurse.
   if (fallback) {
-    const resolved = expandTemplate(fallback);
+    const resolved = expandTemplate(fallback, ctx);
     return isMissing(resolved) ? MISSING : resolved;
   }
   return MISSING;
 }
 
 /** Replace every ${...} and %VAR% in a string (single-valued). */
-export function expandTemplate(str) {
+export function expandTemplate(str, ctx = platformContext()) {
   let out = '';
   let i = 0;
   while (i < str.length) {
@@ -108,7 +192,7 @@ export function expandTemplate(str) {
         if (depth === 0) break;
         j++;
       }
-      out += resolveVar(str.slice(i + 2, j));
+      out += resolveVar(str.slice(i + 2, j), ctx);
       i = j + 1;
       continue;
     }
@@ -117,8 +201,8 @@ export function expandTemplate(str) {
       const j = str.indexOf('%', i + 1);
       if (j > i + 1) {
         const name = str.slice(i + 1, j);
-        if (process.env[name] !== undefined) {
-          out += process.env[name];
+        if (ctx.env[name] !== undefined) {
+          out += ctx.env[name];
           i = j + 1;
           continue;
         }
@@ -129,13 +213,23 @@ export function expandTemplate(str) {
   return out;
 }
 
+/**
+ * Where VS Code and its forks keep their per-editor data, per platform.
+ *
+ *   Windows   %APPDATA%                      (C:\Users\me\AppData\Roaming)
+ *   macOS     ~/Library/Application Support
+ *   Linux     $XDG_CONFIG_HOME or ~/.config
+ */
+function editorDataRoot(ctx) {
+  if (ctx.isWin) return ctx.env.APPDATA || path.join(ctx.home, 'AppData', 'Roaming');
+  if (ctx.darwin) return path.join(ctx.home, 'Library', 'Application Support');
+  return ctx.env.XDG_CONFIG_HOME || path.join(ctx.home, '.config');
+}
+
 /** All VS Code-family "User" directories that can hold workspaceStorage. */
-export function vscodeUserDirs() {
-  const appData = isWin
-    ? process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming')
-    : PLATFORM === 'darwin'
-      ? path.join(HOME, 'Library', 'Application Support')
-      : process.env.XDG_CONFIG_HOME || path.join(HOME, '.config');
+export function vscodeUserDirs(overrides = {}) {
+  const ctx = platformContext(overrides);
+  const appData = editorDataRoot(ctx);
 
   const editors = [
     'Code',            // VS Code
@@ -150,60 +244,77 @@ export function vscodeUserDirs() {
 }
 
 /** VS Code's sibling data directory contains agent sessions and global storage. */
-export function vscodeDataDirs() {
-  return vscodeUserDirs().map((userDir) => path.dirname(userDir));
-}
-
-/** OS-native application-data roots (for `<app data>` templates). */
-function appDataDirs() {
-  if (isWin) return [process.env.APPDATA, process.env.LOCALAPPDATA].filter(Boolean);
-  if (PLATFORM === 'darwin') {
-    return [
-      path.join(HOME, 'Library', 'Application Support'),
-      path.join(HOME, 'Library', 'Preferences'),
-    ];
-  }
-  return [
-    process.env.XDG_DATA_HOME || path.join(HOME, '.local', 'share'),
-    process.env.XDG_CONFIG_HOME || path.join(HOME, '.config'),
-  ];
+export function vscodeDataDirs(overrides = {}) {
+  return vscodeUserDirs(overrides).map((userDir) => path.dirname(userDir));
 }
 
 /**
- * Placeholders that stand for *several* candidate directories. Each template is
- * expanded once per candidate, so the scanner probes all of them and keeps the
- * ones that exist.
+ * Where a native app keeps its data, per platform. `<app data>` templates expand to
+ * every candidate, and the ones that do not exist are simply not matched.
  */
+function appDataDirs(ctx) {
+  if (ctx.isWin) {
+    return [ctx.env.APPDATA, ctx.env.LOCALAPPDATA].filter(Boolean);
+  }
+  if (ctx.darwin) {
+    return [
+      path.join(ctx.home, 'Library', 'Application Support'),
+      path.join(ctx.home, 'Library', 'Preferences'),
+    ];
+  }
+  return [
+    ctx.env.XDG_DATA_HOME || path.join(ctx.home, '.local', 'share'),
+    ctx.env.XDG_CONFIG_HOME || path.join(ctx.home, '.config'),
+  ];
+}
+
 const PLACEHOLDERS = {
-  '<vscode-User>': vscodeUserDirs,
-  '<vscode-data>': vscodeDataDirs,
-  '<vscode-globalStorage>': () => vscodeUserDirs().map((u) => path.join(u, 'globalStorage')),
-  '<app data>': appDataDirs,
-  '<appData>': appDataDirs,
+  '<vscode-User>': (ctx) => vscodeUserDirs(ctx),
+  // From the frontend branch: the sibling of `User` on disk, which holds
+  // `agentSessionData` and some extensions' session stores.
+  '<vscode-data>': (ctx) => vscodeDataDirs(ctx),
+  '<vscode-globalStorage>': (ctx) => vscodeUserDirs(ctx).map((u) => path.join(u, 'globalStorage')),
+  '<app data>': (ctx) => appDataDirs(ctx),
+  '<appData>': (ctx) => appDataDirs(ctx),
 };
 
 /**
  * Expand a registry template into concrete absolute path patterns.
  * Multi-valued placeholders fan out; everything else is a string substitution.
  */
-export function expandStorePath(template, { projectRoot } = {}) {
-  // Registry entries include valid paths for multiple operating systems. Do
-  // not turn a foreign default into a real-looking path under the current
-  // user's home directory (for example C:\Users\name\Library on Windows).
-  if (PLATFORM !== 'darwin' && /(?:^|[/\\])Library[/\\]/.test(template)) return [];
+export function expandStorePath(template, { projectRoot, ...overrides } = {}) {
+  const ctx = platformContext(overrides);
+
+  // A registry entry lists valid paths for several operating systems, so a template
+  // that belongs to another one must not be turned into a plausible-looking path under
+  // the wrong home directory — `C:\Users\me\Library` on Windows. Skipping it early
+  // also saves a glob that could only ever return nothing.
+  //
+  // Kept from the frontend branch, but driven by `ctx` rather than the ambient
+  // platform and environment so the Windows rules stay testable off Windows.
+  if (!ctx.darwin && /(?:^|[/\\])Library[/\\]/.test(template)) return [];
   if (
-    PLATFORM === 'win32' &&
+    ctx.isWin &&
     /(?:^|[/\\])\.config[/\\]|(?:^|[/\\])\.local[/\\]/.test(template) &&
-    process.env.XDG_CONFIG_HOME === undefined &&
-    process.env.XDG_DATA_HOME === undefined
-  ) return [];
-  if (PLATFORM !== 'win32' && /%(?:APPDATA|LOCALAPPDATA)%/.test(template) && process.env.APPDATA === undefined && process.env.LOCALAPPDATA === undefined) return [];
+    ctx.env.XDG_CONFIG_HOME === undefined &&
+    ctx.env.XDG_DATA_HOME === undefined
+  ) {
+    return [];
+  }
+  if (
+    !ctx.isWin &&
+    /%(?:APPDATA|LOCALAPPDATA)%/.test(template) &&
+    ctx.env.APPDATA === undefined &&
+    ctx.env.LOCALAPPDATA === undefined
+  ) {
+    return [];
+  }
 
   let patterns = [template];
 
   for (const [token, fn] of Object.entries(PLACEHOLDERS)) {
     if (!patterns.some((p) => p.includes(token))) continue;
-    const values = fn();
+    const values = fn(ctx);
     patterns = patterns.flatMap((p) => values.map((v) => p.split(token).join(v)));
   }
 
@@ -214,12 +325,12 @@ export function expandStorePath(template, { projectRoot } = {}) {
   }
 
   return patterns
-    .map((p) => expandTemplate(p))
+    .map((p) => expandTemplate(p, ctx))
     .filter((p) => !isMissing(p))
-    .map((p) => (p.startsWith('~') ? path.join(HOME, p.slice(1)) : p))
-    // node:fs glob patterns use POSIX separators even on Windows. Keep the
-    // drive prefix intact while converting native separators for globbing.
-    .map((p) => PLATFORM === 'win32' ? p.replace(/\\/g, '/') : path.normalize(p))
+    .map((p) => (p.startsWith('~') ? path.join(ctx.home, p.slice(1)) : p))
+    // Glob patterns use POSIX separators even on Windows, and a backslash in a glob is
+    // an escape character to minimatch, so every pattern is normalised.
+    .map(toPosix)
     .filter(Boolean)
     // Never glob from the filesystem root: a pattern whose only fixed prefix is
     // `/` would walk the whole disk.
