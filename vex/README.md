@@ -27,3 +27,11 @@ The key is sent only to Google's Gemini API over HTTPS. Source code is included 
 ## Development
 
 Run `npm install`, then press `F5` or run `npm run compile`. The extension bundles to `dist/extension.js`.
+
+## Architecture
+
+- `src/analysis/` gathers facts from the active VS Code editor.
+- `src/context/` builds the typed `LearningContext` sent to the learning pipeline.
+- `src/llm/` owns Gemini model discovery, prompts, transport, retries, and API errors.
+- `src/quiz/` owns quiz models, JSON validation, and quiz-generation orchestration.
+- `src/extension.ts` registers VS Code commands and coordinates these layers.

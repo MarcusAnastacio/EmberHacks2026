@@ -1,25 +1,3 @@
-export type QuizMode = 'guided' | 'architecture' | 'challenge';
-
-export interface QuizQuestion {
-	question: string;
-	choices: string[];
-	answer: number;
-	explanation: string;
-	concept: string;
-}
-
-export interface Quiz {
-	title: string;
-	overview: string;
-	questions: QuizQuestion[];
-}
-
-const modePrompts: Record<QuizMode, string> = {
-	guided: 'Teach like a patient mentor. Start with fundamentals, trace the code from input to output, and use clear explanations.',
-	architecture: 'Teach the design. Focus on responsibilities, data flow, dependencies, tradeoffs, and why the code is structured this way.',
-	challenge: 'Teach by retrieval practice. Ask scenario-based questions that make the learner predict behavior, debug a mistake, or rebuild a small piece.',
-};
-
 const preferredModels = [
 	'gemini-3.8-flash',
 	'gemini-3.7-flash',
@@ -33,23 +11,7 @@ const preferredModels = [
 const maxTransientAttempts = 3;
 const transientRetryDelays = [1000, 2500, 5000];
 
-export async function generateQuiz(apiKey: string, code: string, fileName: string, mode: QuizMode): Promise<Quiz> {
-	const prompt = [
-		'You create educational quizzes for developers learning code written by an AI agent.',
-		modePrompts[mode],
-		`Analyze the following source file (${fileName}). Do not assume behavior that is not supported by the code.`,
-		'Create 5 multiple-choice questions that teach the learner how this code works.',
-		'Each answer must be the zero-based index of the correct choice.',
-		'Return only valid JSON with this exact shape: {"title": string, "overview": string, "questions": [{"question": string, "choices": string[], "answer": number, "explanation": string, "concept": string}]}',
-		'Keep choices plausible, explanations specific, and questions independent.',
-		`SOURCE CODE:\n${code}`,
-	].join('\n\n');
-
-	const response = await requestGemini(apiKey, prompt);
-	return parseQuiz(response);
-}
-
-async function requestGemini(apiKey: string, prompt: string): Promise<string> {
+export async function generateText(apiKey: string, prompt: string): Promise<string> {
 	const body = JSON.stringify({
 		contents: [{ parts: [{ text: prompt }] }],
 		generationConfig: {
@@ -137,7 +99,7 @@ async function requestOnce(apiKey: string, body: string, model: string): Promise
 			throw new Error('Gemini returned an unreadable response.');
 		}
 	} catch (error) {
-		if (error instanceof Error && error.message.startsWith('Gemini ')) {
+		if (error instanceof Error && (error.message.startsWith('Gemini ') || error.message.startsWith('Could not reach Gemini'))) {
 			throw error;
 		}
 		throw new Error(`Could not reach Gemini: ${error instanceof Error ? error.message : 'network request failed'}`);
@@ -178,19 +140,4 @@ function formatGeminiError(statusCode: number | undefined, body: string, model: 
 		return `Gemini quota or rate limit exceeded. ${providerMessage || 'Wait and try again, or check billing and quotas.'}`;
 	}
 	return `Gemini request failed (${status}). ${providerMessage || 'Check the API key, model access, and quota.'}`;
-}
-
-function parseQuiz(text: string): Quiz {
-	const jsonText = text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-	const quiz = JSON.parse(jsonText) as Quiz;
-	if (!quiz.title || !quiz.overview || !Array.isArray(quiz.questions) || quiz.questions.length === 0) {
-		throw new Error('Gemini returned an incomplete quiz. Try generating it again.');
-	}
-	for (const question of quiz.questions) {
-		if (!question.question || !Array.isArray(question.choices) || question.choices.length < 2 ||
-			!Number.isInteger(question.answer) || question.answer < 0 || question.answer >= question.choices.length) {
-			throw new Error('Gemini returned an invalid question. Try generating it again.');
-		}
-	}
-	return quiz;
 }

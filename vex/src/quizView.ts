@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Quiz, QuizMode } from './gemini';
+import { Quiz, QuizMode } from './quiz/models';
 
 export interface QuizViewMessage {
 	command: 'generate' | 'setKey';

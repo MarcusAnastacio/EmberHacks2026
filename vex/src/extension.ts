@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
-import { generateQuiz, QuizMode } from './gemini';
+import { buildLearningContext } from './context/contextBuilder';
+import { QuizMode } from './quiz/models';
+import { generateQuiz } from './quiz/quizGenerator';
 import { QuizViewProvider } from './quizView';
 
 const geminiKeySecret = 'vex.geminiApiKey';
@@ -63,12 +65,11 @@ async function generateQuizForActiveEditor(
 		}
 	}
 
-	const selectedCode = editor.document.getText(editor.selection).trim();
-	const code = (selectedCode || editor.document.getText()).slice(0, 50000);
-	const sourceName = editor.document.fileName.split(/[\\/]/).pop() ?? 'active editor';
+	const learningContext = await buildLearningContext(editor);
+	const sourceName = learningContext.activeFilePath.split(/[\\/]/).pop() ?? 'active editor';
 	quizView.renderStatus('Gemini is building a lesson from your code...');
 	try {
-		const quiz = await generateQuiz(apiKey, code, sourceName, mode);
+		const quiz = await generateQuiz(apiKey, learningContext, mode);
 		quizView.renderQuiz(quiz, sourceName);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Quiz generation failed.';
