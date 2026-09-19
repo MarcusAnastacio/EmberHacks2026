@@ -127,10 +127,11 @@ and the only one that covers the seam.
 
 ## Conventions
 
-- **`textContent`, never `innerHTML`, for anything from a transcript.** Titles, project
-  names, tool names and message bodies all come from other tools' stores. The one
-  `innerHTML` in the codebase is in the earlier quiz component and should become DOM
-  construction.
+- **`textContent`, never `innerHTML`.** Titles, project names, tool names and message
+  bodies all come from other tools' stores, so this is the app's main XSS boundary. The
+  `h()` helper takes a `text` key and no `html` key, on purpose: the escape hatch was
+  removed rather than left unused, because leaving it is how a later component ends up
+  reaching for it.
 - **No em dashes, no emojis, no exclamation marks** in user-facing copy. The backend
   enforces the same rule on generated content, and `scoreBand` copy is tested against it.
 - **Green and red are reserved for grading an answer.** The four score bands use other
