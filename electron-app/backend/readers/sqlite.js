@@ -259,7 +259,20 @@ export function readSqliteScript(sqlText, ctx) {
     return [];
   }
   try {
-    return sessionsFromDb(db, ctx, ctx.path);
+    const sessions = sessionsFromDb(db, ctx, ctx.path);
+    if (sessions.length === 0) {
+      // Same honesty as readSqlite: a store we can open but cannot decode is
+      // reported as detected, not silently dropped. Several agents keep message
+      // text in a sibling table (`part`, `blocks`) that the generic reader does not
+      // join, so this path is reached in practice.
+      const p = placeholderFor(
+        ctx,
+        ctx.path,
+        `[Detected ${ctx.harnessName} store at ${ctx.path}, but no message table was recognised.]`,
+      );
+      if (p) sessions.push(p);
+    }
+    return sessions;
   } finally {
     try {
       db.close();

@@ -1,61 +1,93 @@
 // Aider's project-local transcript: `.aider.chat.history.md`
 //
-// Shape:
-//   # aider chat started at 2024-05-01 20:41:33
-//   > /add foo.py
-//   > fix the bug          <- consecutive "> " lines are one user turn
-//   #### Here is the fix   <- everything else is assistant output
-//   Tokens: 1.2k sent, 300 received.     <- dropped
+// The prefix scheme is counter-intuitive and easy to get backwards, so it is taken
+// from aider's own writer (aider/io.py: `prefix = "####"` applied to the user's
+// input) rather than guessed:
+//
+//   # aider chat started at 2026-07-17 09:00:00      session banner
+//   #### what the user typed                          USER  (every line of a
+//   #### continued multi-line input                   multi-line input is prefixed)
+//   > tool / system output                            not conversation, ignored
+//   raw markdown                                      ASSISTANT
+//
+// An earlier version treated `#### ` as assistant text, which silently discarded
+// every user turn in every aider session — leaving the assistant answering questions
+// that were not there.
+//
+// Two more details that matter:
+//   * consecutive `#### ` lines are ONE user turn, because aider prefixes each line
+//     of a multi-line input separately;
+//   * text before the first `#### ` is the banner and is not speech, and fenced code
+//     blocks may legitimately contain any of these prefixes.
 
 import { finalizeSession, makeMessage, toEpochMs } from '../lib/normalize.js';
 
-const NOISE = [
-  /^#\s*aider chat started at\s*(.*)$/i,
-  /^Tokens:.*$/i,
-  /^Cost:.*$/i,
-  /^aider>/i,
-  /^Applied edit to .*$/i,
-  /^Commit .*$/i,
-];
+const SESSION_MARK = /^#\s*aider chat started at\s*(.+)$/i;
 
 export function readMarkdown(raw, ctx) {
-  const lines = raw.split('\n');
+  const lines = String(raw).split('\n');
   const messages = [];
   let started;
-  let userBuf = [];
-  let assistantBuf = [];
+  let role = null; // 'user' | 'assistant' | null
+  let buf = [];
+  let inFence = false;
+  let sawUserTurn = false;
 
-  const flushUser = () => {
-    const text = userBuf.join('\n').trim();
-    userBuf = [];
-    if (text) messages.push(makeMessage({ role: 'user', text }));
-  };
-  const flushAssistant = () => {
-    const text = assistantBuf.join('\n').trim();
-    assistantBuf = [];
-    if (text) messages.push(makeMessage({ role: 'assistant', text }));
+  const flush = () => {
+    const text = buf.join('\n').trim();
+    buf = [];
+    // Assistant output before the first user turn is the banner, not conversation.
+    if (text && (role === 'user' || (role === 'assistant' && sawUserTurn))) {
+      messages.push(makeMessage({ role, text }));
+    }
+    role = null;
   };
 
   for (const line of lines) {
-    const header = /^#\s*aider chat started at\s*(.+)$/i.exec(line);
-    if (header) {
-      started = toEpochMs(header[1].trim().replace(' ', 'T'));
+    // A fence toggles verbatim mode: anything that looks like a prefix inside a
+    // code block is code, not structure.
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      if (role !== 'assistant') {
+        flush();
+        role = 'assistant';
+      }
+      buf.push(line);
       continue;
     }
-    if (NOISE.some((re) => re.test(line))) continue;
 
-    if (line.startsWith('> ') || line === '>') {
-      // A user block can only start once the previous assistant block closed.
-      if (assistantBuf.length) flushAssistant();
-      userBuf.push(line.slice(2));
-      continue;
+    if (!inFence) {
+      const header = SESSION_MARK.exec(line);
+      if (header) {
+        started = toEpochMs(header[1].trim().replace(' ', 'T'));
+        continue;
+      }
+
+      if (/^####(\s|$)/.test(line)) {
+        if (role !== 'user') {
+          flush();
+          role = 'user';
+        }
+        buf.push(line.replace(/^####\s?/, ''));
+        sawUserTurn = true;
+        continue;
+      }
+
+      // aider marks its own tool and system output with "> ". It is not speech.
+      if (/^>(\s|$)/.test(line)) {
+        if (role === 'assistant') flush();
+        continue;
+      }
     }
-    if (userBuf.length) flushUser();
-    assistantBuf.push(line);
+
+    if (role !== 'assistant') {
+      flush();
+      role = 'assistant';
+    }
+    buf.push(line);
   }
-  flushUser();
-  flushAssistant();
+  flush();
 
-  if (!messages.length) return null;
+  if (messages.length === 0) return null;
   return finalizeSession({ ...ctx, messages, started, source: 'file' });
 }

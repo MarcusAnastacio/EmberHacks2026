@@ -36,6 +36,7 @@ npm run models                   # which Gemini models this key can reach
 # requires GEMINI_API_KEY (see Setup)
 npm run quiz -- <session-id> --questions 6 --types mcq,cloze,open
 npm run quiz -- <id> --plan --questions 6      # plan only, no API call
+npm run compat                   # sweep every bundled fixture format, no installs
 
 node cli.js --show <session-id>          # inspect one normalized session
 node cli.js --digest <session-id>        # the bounded conversation + project digest
@@ -260,6 +261,10 @@ electron-app/backend/
 │   └── generate-example.js  #  Builds a synthetic project + session and writes it.
 │
 ├── test/
+│   ├── readers.test.js   #   11 assertions over format routing and the per-format quirks
+│   │                     #     that the sweep found. See Format compatibility.
+│   ├── compat-sweep.js   #   `npm run compat`: every fixture format through the full
+│   │                     #     path. The tool that found five silent parser bugs.
 │   ├── redact.test.js    #   72 assertions over redact.js. 36 of them assert that benign
 │   │                     #     text is NOT touched — the false positives matter more.
 │   ├── topics.test.js    #   15 assertions over topic segmentation and slice bounds.
@@ -361,6 +366,52 @@ No fixture directory is read during a real scan. Fixture mode is opt-in and labe
 `fixture: true` in every report row.
 
 ---
+
+## Format compatibility
+
+You do not need the tools installed to test them. `fixtures/` holds real sample stores
+from 33 agents, so the whole path — reader → normalize → topics → digest → plan — can be
+run against every format:
+
+```bash
+npm run compat
+```
+
+```
+FORMAT                        SESS  PH  MSGS  CHARS  USER  TOPICS  PLAN  DIGEST
+Claude Code                      1   0     2     64     1       1     1     603
+Codex CLI                        1   0     2     42     1       1     1     598
+Cursor                           1   0     2    197     1       1     1     490
+aider                            1   0     2     59     1       1     1     552
+...
+readable conversation (user + assistant): 30/36
+no fixture at all:        chatgpt, claude-web, windsurf
+detected, not decoded:    crush, opencode, zed
+```
+
+**30 of 36 formats produce a readable conversation.** The other six are honest rather than
+broken: three have no fixture at all (they are export files or a protobuf store we
+documented as detect-only), and three keep message text in a sibling table
+(`part`, `blocks`) that the generic SQLite reader does not join — those report as
+detected-but-not-decoded rather than pretending to work.
+
+### Five silent bugs the sweep found
+
+Each of these had the format listed as supported while half its conversation was being
+discarded. None of them would have shown up as an error.
+
+| Bug | Effect |
+|---|---|
+| Cursor's `format_kind` is `sqlite-kv-or-jsonl`, and a kind starting with `sqlite` routed its `.jsonl` agent transcripts to the SQLite reader | Cursor produced a placeholder instead of a conversation. Routing now prefers the file extension over the declared kind. |
+| aider marks the **user's** input with `#### ` (from its own writer: `prefix = "####"`), and the reader treated that as assistant prose | **Every user turn in every aider session was discarded** — the assistant appeared to answer questions that were not there. |
+| Antigravity puts the speaker in `source` with values `USER_EXPLICIT` / `MODEL`; only `MODEL` matched a known role | Every Antigravity user turn dropped. Also strips the `<USER_REQUEST>` / `<ADDITIONAL_METADATA>` wrappers and reads `cwd` out of the metadata. |
+| The Gemini CLI types assistant turns as `"type": "gemini"` with top-level `content`, and shape detection fell through to the generic extractor | Only the user's half of every Gemini session survived. |
+| Kimi streams the answer as `context.append_loop_event` → `event.part`, which nothing handled | An entire Kimi session read as the user talking to themselves. `part.type` of `think` is now counted as dropped reasoning, not kept as answer text. |
+
+The last is worth emphasising: `think` is Kimi's spelling of a reasoning part, and it was
+not in the list of reasoning kinds — so it would have been sent to the model. That is the
+exact failure the reasoning exclusion exists to prevent, and it took a format sweep to
+find it.
 
 ## The digest
 
@@ -669,6 +720,9 @@ list of false-positive classes.
 - **Tool output is excluded by default.** Measured at 98% of the bytes in a coding session,
   it is almost never what a quiz should ask about, so `finalizeSession` drops the bodies and
   keeps a `toolCalls` count. Pass `{ keepToolOutput: true }` to retain them.
+- **Three formats are detected but not decoded** (`opencode`, `crush`, `zed`): their
+  message text lives in a sibling SQLite table the generic reader does not join. The store
+  is reported in the sidebar rather than hidden, but no conversation comes out of it.
 - **Redaction is pattern-based, so it cannot catch everything.** A secret with no recognisable
   shape and no secret-ish keyword will get through with the entropy pass off. It raises the
   cost of an accident; it is not a guarantee.

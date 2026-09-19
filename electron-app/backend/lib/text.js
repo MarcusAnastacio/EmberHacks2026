@@ -62,7 +62,7 @@ function normKind(kind) {
 
 const TOOL_CALL_KINDS = new Set(['tooluse', 'toolcall', 'functioncall', 'toolinvocation']);
 const TOOL_RESULT_KINDS = new Set(['toolresult', 'toolresponse', 'functioncalloutput', 'tooloutput']);
-const THINKING_KINDS = new Set(['thinking', 'redactedthinking', 'reasoning', 'reasoningsummary']);
+const THINKING_KINDS = new Set(['thinking', 'redactedthinking', 'reasoning', 'reasoningsummary', 'think']);
 const TEXT_KINDS = new Set(['text', 'inputtext', 'outputtext', 'plaintext']);
 const SKIP_KINDS = new Set(['image', 'inputimage', 'document', 'audiospeech', 'inputaudio']);
 

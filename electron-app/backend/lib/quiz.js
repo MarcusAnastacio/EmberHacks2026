@@ -83,13 +83,21 @@ export function planQuiz(session, options = {}) {
 
   const { topics, stats: topicStats } = deriveTopics(session, { maxTopics: opts.maxTopics });
   if (topics.length === 0) {
+    // No topics means no questions, and `questionCount` is not in scope yet — it is
+    // capped against the deck further down. Referring to it here crashed with a
+    // temporal-dead-zone error on any session with no user turns, which is what a
+    // sweep across every bundled fixture format turned up.
     return {
       plan: null,
       types,
-      questionCount,
+      questionCount: 0,
+      requestedQuestions: requested,
+      shortfall: requested,
       requestedTopics: topicsNeeded,
       selectedTopics: [],
       deck: [],
+      expectedQuestions: 0,
+      expectedFlashcards: 0,
       topicStats,
       reason: 'no-topics',
     };
@@ -279,6 +287,22 @@ THE EXCERPT
 It has up to two labelled parts. PRECEDING CONTEXT is background from earlier in
 the same session — read it to understand how the topic was reached, but do not ask
 about it. Everything to ask about is under the TOPIC heading.
+
+READABILITY
+Write for someone skimming on a phone, not for a design review. The material is a
+memory aid, so plain language beats precise jargon every time.
+- Prefer short sentences. One idea each.
+- Never stack nouns into a phrase. "a host-agnostic normalizer core" is precise and
+  unreadable; write "the shared layer that reads every tool's history".
+- A term you cannot avoid: define it in the same sentence, in plain words, the first
+  time it appears. Then use it.
+- Replace invented or specialised vocabulary with what it does. Not "the extraction
+  layer performs span normalisation" but "the extractor rewrites the matched text".
+- Keep real identifiers (file names, flags, function names) exactly as written, in
+  backticks. They are the one place precision matters.
+- Flashcards: the front is one short question, the back is one or two short sentences.
+- Question prompts: under about 30 words. Put anything needed as context in an
+  options list or the rubric, not in a long stem.
 
 RULES
 - Every question must be understandable on its own, by someone who has not read the

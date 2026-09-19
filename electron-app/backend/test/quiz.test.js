@@ -138,6 +138,28 @@ await check('flashcards are always produced, even with no question types', async
   assert.equal(plan.expectedFlashcards, 2, 'and still produces two flashcards');
 });
 
+await check('a session with no topics plans cleanly instead of throwing', async () => {
+  // Regression: the no-topics early return referenced a const declared further
+  // down, so any session without a user turn threw a temporal-dead-zone error.
+  // Every bundled fixture format is swept for this, and one hit it.
+  const noUserTurns = finalizeSession({
+    harness: 'pi', harnessName: 'pi', nativeId: 'empty', project: 'demo',
+    started: at(0), updated: at(1),
+    messages: [{ role: 'assistant', text: 'nothing was asked', ts: at(0) }],
+  });
+  const plan = planQuiz(noUserTurns, { questionCount: 5, types: ['mcq'] });
+  assert.equal(plan.plan, null);
+  assert.equal(plan.reason, 'no-topics');
+  assert.equal(plan.questionCount, 0);
+  assert.equal(plan.expectedQuestions, 0);
+  assert.equal(plan.shortfall, 5, 'the whole request is a shortfall when there are no topics');
+  assert.deepEqual(plan.deck, []);
+
+  // An empty message list must behave the same way.
+  const blank = finalizeSession({ harness: 'pi', harnessName: 'pi', nativeId: 'blank', project: 'demo', started: at(0), updated: at(1), messages: [] });
+  assert.equal(blank, null, 'a session with no messages should normalize to null');
+});
+
 await check('unknown question types are ignored rather than passed through', async () => {
   const plan = planQuiz(multiTopicSession(), { questionCount: 4, types: ['mcq', 'essay', 'truefalse'] });
   assert.deepEqual(plan.types, ['mcq']);

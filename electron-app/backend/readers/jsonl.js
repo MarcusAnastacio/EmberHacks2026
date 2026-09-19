@@ -28,7 +28,7 @@ export function parseJsonl(raw) {
 
 // --- shape detection -------------------------------------------------------
 
-const ROLES = new Set(['user', 'assistant', 'system', 'tool', 'human', 'ai', 'model', 'developer']);
+const ROLES = new Set(['user', 'assistant', 'system', 'tool', 'human', 'ai', 'model', 'developer', 'gemini']);
 
 function pickRole(...candidates) {
   for (const c of candidates) {
@@ -44,6 +44,10 @@ function pickRole(...candidates) {
  */
 export function detectJsonlShape(records) {
   const head = records.slice(0, 40);
+
+  // Kimi Code: messages under context.append_message, assistant content streamed
+  // through context.append_loop_event -> event.part.
+  if (head.some((r) => r?.type === 'context.append_loop_event' || r?.type === 'context.append_message')) return 'kimi';
 
   // Grok / any ACP agent stream: chunks arrive under params.update.
   if (head.some((r) => r?.params?.update?.sessionUpdate)) return 'grok-acp';
@@ -73,9 +77,12 @@ export function detectJsonlShape(records) {
     return 'antigravity';
   }
   if (head.some((r) => typeof r?.uuid === 'string' && (r?.parentUuid !== undefined || r?.sessionId))) return 'claude';
-  if (head.some((r) => r?.type === 'user' || r?.type === 'assistant')) {
+  if (head.some((r) => r?.type === 'user' || r?.type === 'assistant' || r?.type === 'gemini')) {
     if (head.some((r) => r?.message?.content !== undefined)) return 'claude';
     if (head.some((r) => r?.message?.parts !== undefined)) return 'gemini';
+    // Top-level `content`, which is how the Gemini CLI stores it. Without this the
+    // whole transcript fell through to the generic extractor.
+    if (head.some((r) => r?.content !== undefined)) return 'claude';
   }
   if (head.some((r) => r?.type === 'message' && r?.message?.role)) return 'pi';
   if (head.some((r) => pickRole(r?.role, r?.payload?.role, r?.author?.role))) return 'generic';
@@ -118,7 +125,10 @@ function extractClaude(records) {
     if (r?.type === 'summary') continue;
     // System/meta records carry no conversation.
     if (r?.isMeta) continue;
-    if (r?.type === 'user' || r?.type === 'assistant' || r?.type === 'system') {
+    // 'gemini' is how the Gemini CLI types an assistant turn. Without it here, every
+    // assistant message in a Gemini session was dropped and only the user's half of
+    // the conversation survived.
+    if (r?.type === 'user' || r?.type === 'assistant' || r?.type === 'system' || r?.type === 'gemini' || r?.type === 'model') {
       // Claude uses message.content; Qwen Code and other forks use message.parts.
       const content = r.message?.content ?? r.message?.parts ?? r.content ?? r.parts;
       const { text, tools, thinkingChars } = contentToParts(content);
@@ -187,16 +197,65 @@ function extractCodexHistory(records) {
   return { messages };
 }
 
+/**
+ * Antigravity records carry the speaker in `source`, not `role`, and the value is
+ * Antigravity's own vocabulary: `USER_EXPLICIT` and `MODEL`. Only `MODEL` matched a
+ * known role before, so every user turn in an Antigravity session was silently
+ * dropped and the transcript read as the model talking to itself.
+ */
+function antigravityRole(source) {
+  const s = String(source || '').trim().toLowerCase();
+  if (!s) return null;
+  if (s.startsWith('user')) return 'user';
+  if (s === 'model' || s.startsWith('assistant') || s.startsWith('agent')) return 'assistant';
+  if (s.startsWith('tool') || s.startsWith('function')) return 'tool';
+  if (s.startsWith('system')) return 'system';
+  return null;
+}
+
+/**
+ * Antigravity wraps a user turn in XML-ish markers and appends a metadata blob:
+ *
+ *   <USER_REQUEST>inspect the transcript<ADDITIONAL_METADATA>{"cwd":"/x"}</ADDITIONAL_METADATA></USER_REQUEST>
+ *
+ * The markers are plumbing, so they are stripped, but the metadata is worth reading
+ * first because it is where the working directory lives.
+ */
+function unwrapAntigravityContent(content) {
+  if (typeof content !== 'string') return { text: content, cwd: undefined };
+  let cwd;
+  const meta = /<ADDITIONAL_METADATA>([\s\S]*?)<\/ADDITIONAL_METADATA>/g;
+  let text = content.replace(meta, (_m, json) => {
+    try {
+      const parsed = JSON.parse(json.trim());
+      if (typeof parsed?.cwd === 'string') cwd = parsed.cwd;
+    } catch {
+      /* the metadata is not always valid JSON; it is still not speech */
+    }
+    return '';
+  });
+  text = text.replace(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/g, '$1');
+  // Any wrapper left over (a truncated or nested tag) is not content either.
+  text = text.replace(/<\/?[A-Z_][A-Z0-9_]*>/g, '');
+  return { text: text.trim(), cwd };
+}
+
 function extractAntigravity(records) {
   const messages = [];
   let cwd;
   let nativeId;
+
   for (const r of records) {
     if (r?.cwd) cwd = cwd || r.cwd;
     if (r?.conversation_id || r?.conversationId) nativeId = nativeId || r.conversation_id || r.conversationId;
-    const role = pickRole(r?.role, r?.source, r?.type, r?.author);
+
+    const role = antigravityRole(r?.source) || antigravityRole(r?.role) || pickRole(r?.type);
     if (!role) continue;
-    const { text, tools, thinkingChars } = contentToParts(r.content ?? r.text);
+
+    const { text: raw, cwd: metaCwd } = unwrapAntigravityContent(r.content ?? r.text);
+    if (metaCwd) cwd = cwd || metaCwd;
+
+    const { text, tools, thinkingChars } = contentToParts(raw);
     if (!text && !tools?.length) continue;
     messages.push(makeMessage({ role, text, thinkingChars, ts: toEpochMs(r.created_at || r.timestamp), tools }));
   }
@@ -320,8 +379,83 @@ function extractGrokAcp(records) {
   return { cwd, nativeId, messages };
 }
 
+/**
+ * Kimi Code's wire log.
+ *
+ * Two record kinds carry conversation: `context.append_message` for whole messages
+ * (the user's turns), and `context.append_loop_event` for the assistant's streamed
+ * `event.part` blocks, where `part.type` is `think` (reasoning, dropped) or `text`.
+ * Only the first kind was understood before, so an entire Kimi session read as the
+ * user talking to themselves.
+ */
+function extractKimi(records) {
+  const messages = [];
+  let nativeId;
+  let started;
+  let pending = [];
+  // Reasoning is dropped from the text but its size is reported, so the digest can
+  // say how much of the session it is not showing.
+  let pendingThinking = 0;
+
+  const flush = () => {
+    const text = pending.join('\n').trim();
+    const thinkingChars = pendingThinking;
+    pending = [];
+    pendingThinking = 0;
+    if (text) messages.push(makeMessage({ role: 'assistant', text, thinkingChars }));
+  };
+
+  for (const r of records) {
+    const ts = toEpochMs(r?.time || r?.timestamp);
+
+    if (r?.type === 'context.append_message' && r.message) {
+      const { text, tools, thinkingChars } = contentToParts(r.message.content);
+      const role = normalizeRoleish(r.message.role);
+      if (role === 'user') {
+        flush();
+        if (text) messages.push(makeMessage({ role: 'user', text, ts, tools, thinkingChars }));
+      } else if (text || tools?.length || thinkingChars) {
+        if (text) pending.push(text);
+        pendingThinking += thinkingChars || 0;
+        if (tools?.length) {
+          flush();
+          messages.push(makeMessage({ role: 'assistant', text: '', ts, tools }));
+        }
+      }
+      continue;
+    }
+
+    if (r?.type === 'context.append_loop_event') {
+      const part = r.event?.part;
+      if (!part) continue;
+      // contentToParts handles part.type of 'think' as reasoning and 'text' as text.
+      const { text, tools, thinkingChars } = contentToParts(part);
+      if (text) pending.push(text);
+      pendingThinking += thinkingChars || 0;
+      if (!text && tools?.length) {
+        flush();
+        messages.push(makeMessage({ role: 'assistant', text: '', ts, tools }));
+      }
+      continue;
+    }
+  }
+  flush();
+  return { nativeId, started, messages };
+}
+
+/** Local role normaliser so this extractor does not depend on normalize.js internals. */
+function normalizeRoleish(role) {
+  const r = String(role || '').toLowerCase();
+  if (r === 'user' || r === 'human') return 'user';
+  if (r === 'assistant' || r === 'model' || r === 'gemini') return 'assistant';
+  if (r === 'system') return 'system';
+  if (r === 'tool' || r === 'toolresult') return 'tool';
+  return null;
+}
+
 const EXTRACTORS = {
   pi: extractPi,
+  kimi: extractKimi,
   claude: extractClaude,
   'codex-rollout': extractCodexRollout,
   'codex-history': extractCodexHistory,
