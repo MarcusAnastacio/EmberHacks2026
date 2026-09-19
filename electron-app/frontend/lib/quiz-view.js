@@ -16,59 +16,52 @@
 const LETTERS = 'ABCDEFGH';
 
 /**
- * Build the ordered step list for a quiz.
+ * Build the ordered step list for a quiz: every flashcard, then every question.
  *
- * Flashcards come first, because the workflow is to learn the prerequisites before being
- * tested. `quiz.capabilities` in the backend describes the same rule; this is its
- * client-side expression.
+ * Two phases rather than interleaved per topic. The flow is learn the prerequisites,
+ * then be tested, and a single phase boundary is much easier to label in the UI
+ * ("Flashcard 3 of 4" then "Question 1 of 6") than a topic-by-topic alternation.
+ *
+ * Steps are ordered for presentation only. Grading is by question id, so nothing here
+ * affects a stored attempt.
  */
 export function toSteps(quiz) {
   if (!quiz) return [];
-  const steps = [];
-  const cardsByTopic = new Map();
 
+  // Flashcards, grouped by topic so a topic's cards stay together.
+  const cardsByTopic = new Map();
   for (const card of quiz.flashcards || []) {
     if (!cardsByTopic.has(card.topicId)) cardsByTopic.set(card.topicId, []);
     cardsByTopic.get(card.topicId).push(card);
   }
 
-  // One flashcard phase per topic, then that topic's questions. Keeps a topic's
-  // prerequisites next to the questions they unlock.
-  const topicOrder = [...(quiz.topicsUsed || []).map((t) => t.id)];
-  for (const topicId of topicOrder) {
-    for (const card of (cardsByTopic.get(topicId) || [])) {
+  const orderedTopicIds = [
+    ...(quiz.topicsUsed || []).map((t) => t.id),
+    ...[...cardsByTopic.keys()].filter((id) => !(quiz.topicsUsed || []).some((t) => t.id === id)),
+  ];
+
+  const steps = [];
+  for (const topicId of orderedTopicIds) {
+    for (const [index, card] of (cardsByTopic.get(topicId) || []).entries()) {
       steps.push({
         kind: 'flashcard',
-        id: `card-${topicId}-${steps.length}`,
+        id: `card-${topicId}-${index}`,
         topicId,
         topicLabel: card.topicLabel || topicId,
         front: card.front,
         back: card.back,
       });
     }
-    for (const q of (quiz.questions || []).filter((q) => q.topicId === topicId)) {
-      steps.push(questionToStep(q));
-    }
   }
 
-  // Anything whose topic is not in topicsUsed (a stored quiz, an older shape) still has
-  // to be reachable.
-  const placed = new Set(steps.map((s) => s.id));
-  for (const q of quiz.questions || []) {
-    if (!placed.has(q.id)) steps.push(questionToStep(q));
-  }
-  for (const card of quiz.flashcards || []) {
-    const id = `card-${card.topicId}-${cardsByTopic.get(card.topicId)?.indexOf(card)}`;
-    if (!placed.has(id) && !steps.some((s) => s.kind === 'flashcard' && s.front === card.front)) {
-      steps.push({
-        kind: 'flashcard',
-        id,
-        topicId: card.topicId,
-        topicLabel: card.topicLabel || card.topicId,
-        front: card.front,
-        back: card.back,
-      });
-    }
+  // Then the questions, in the order the backend produced them, which is the order the
+  // topics were selected in.
+  const placedIds = new Set();
+  for (const question of quiz.questions || []) {
+    const step = questionToStep(question);
+    if (placedIds.has(step.id)) continue;
+    placedIds.add(step.id);
+    steps.push(step);
   }
 
   return steps.map((step, index) => ({ ...step, index, isLast: index === steps.length - 1 }));
@@ -172,6 +165,14 @@ export function describeResult(step, result) {
     detail: step.explanation,
     expected: result.expected,
     given: result.given,
+  };
+}
+
+/** How many steps of each phase, for labelling without walking the list twice. */
+export function phaseCounts(steps) {
+  return {
+    flashcards: steps.filter((s) => s.kind === 'flashcard').length,
+    questions: steps.filter((s) => s.kind !== 'flashcard').length,
   };
 }
 

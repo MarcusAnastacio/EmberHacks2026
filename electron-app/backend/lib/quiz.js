@@ -505,7 +505,15 @@ function buildPrompt({ slice, topic, types, flashcardsPerTopic, session, focus =
 
   const byType = {
     mcq: '- mcq: exactly four options keyed A-D, exactly one correct. Distractors must be plausible to someone who half-remembers the conversation, not obviously wrong.',
-    cloze: '- cloze: real code taken from the excerpt, with the important expression replaced by {{blank_1}} (then {{blank_2}} if needed). The blank must be something the answer could not be guessed without understanding. Provide alternatives for any answer that has more than one correct spelling.',
+    cloze: `- cloze: real code taken from the excerpt, with the important part replaced by {{blank_1}} (then {{blank_2}} if needed).
+  Blank out something with EXACTLY ONE correct spelling: an identifier, a function or
+  method name, a flag, a keyword, a config key, a type, a number. Do not blank out a
+  whole expression or a block of logic, because several implementations would be correct
+  and the question would then have no single answer. If the only interesting gap is a
+  design choice with several valid answers, ask it as an open question instead.
+  Always fill the alternatives list. An empty list is only acceptable when the answer
+  truly has one spelling. Add every variant a careful person might type: with and
+  without trailing parentheses, a different but equivalent API name, a short form.`,
     open: '- open: a free-text question that requires explaining a decision, a cause or a trade-off rather than recalling a fact. Provide a rubric of 2-4 weighted criteria and a reference answer.',
   };
 
