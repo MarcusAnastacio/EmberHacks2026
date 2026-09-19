@@ -17,7 +17,7 @@ import { scanAll, discoverStores, findSession, toQuizPayload, isQuizReady, loadR
 import { redactPayload } from './lib/redact.js';
 import { buildDigest } from './lib/digest.js';
 import { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
-import { generateQuiz, planQuiz, quizSchema, QUESTION_TYPES } from './lib/quiz.js';
+import { generateQuiz, planQuiz, quizSchema, quizCapabilities, assessReadiness, QUESTION_TYPES } from './lib/quiz.js';
 import { hasApiKey, listModels } from './lib/gemini.js';
 
 export class CompatibilityLayer extends EventEmitter {
@@ -192,6 +192,21 @@ export class CompatibilityLayer extends EventEmitter {
     return generateQuiz(session, opts);
   }
 
+  /**
+   * Whether this conversation can support a quiz, with the reasons when it cannot.
+   * Cheap and offline, so the UI can call it while rendering the sidebar.
+   */
+  assessReadiness(id, opts) {
+    const session = this.getSession(id);
+    if (!session) return null;
+    return assessReadiness(session, opts);
+  }
+
+  /** Option bounds, type labels and key state, so the UI hardcodes none of it. */
+  quizCapabilities() {
+    return quizCapabilities();
+  }
+
   /** Whether a Gemini key is available, without revealing it. */
   hasApiKey(explicit) {
     return hasApiKey(explicit);
@@ -239,7 +254,7 @@ export { sqliteAvailable } from './readers/sqlite.js';
 export { redact, redactPayload, patternKinds } from './lib/redact.js';
 export { buildDigest, digestFits, extractTouched, renderTurnRange } from './lib/digest.js';
 export { deriveTopics, topicSlice, topicSlices } from './lib/topics.js';
-export { generateQuiz, planQuiz, quizSchema, validateResult, QUESTION_TYPES, DEFAULTS as QUIZ_DEFAULTS } from './lib/quiz.js';
+export { generateQuiz, planQuiz, quizSchema, validateResult, quizCapabilities, assessReadiness, QUESTION_TYPES, READINESS, DEFAULTS as QUIZ_DEFAULTS } from './lib/quiz.js';
 export { generateJson, listModels, hasApiKey, resolveApiKey, GeminiError, DEFAULT_MODEL_CHAIN } from './lib/gemini.js';
 export {
   renderTree, collectDocs, collectManifests, commitsInWindow, workingTreeState,

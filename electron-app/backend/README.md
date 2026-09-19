@@ -658,6 +658,68 @@ npm run quiz -- <session-id> --questions 4 --types mcq --seed 42   # reproducibl
 npm run quiz -- <session-id> --questions 6 --out quiz.json
 ```
 
+### The readiness gate
+
+A real session containing only "hi" passed the old turn-count check and produced a
+flashcard and a question about nothing. A conversation is now assessed before anything is
+generated, at two levels — the session, and each topic inside it:
+
+| Floor | Value | Why |
+|---|---|---|
+| user turns | 1 | a session with no human turn is not a conversation |
+| session characters | 400 | cheap early guard |
+| topic characters | 700 | two flashcards and a question need something to work from |
+| topic characters, per type | +250 each | a topic must carry one question of each requested type |
+
+Calibration is the interesting part. Requiring **two** user turns refused four real
+sessions of 4k–8k characters that happened to be a single long question with a long answer
+— perfectly quizzable work. On the real history of 49 sessions, the rule above refuses
+**3**: "hi" at 56 characters, and two sessions of 508 and 702 characters that genuinely
+cannot support two flashcards and three questions. 46 pass.
+
+`assessReadiness()` returns **reasons**, not a boolean, so the UI can say *"only 1 user
+turn, need 2; only 34 characters, need 400"* rather than greying something out silently.
+`generateQuiz` refuses without calling the model, and thin topics are dropped from the plan
+and counted in `droppedThinTopics`.
+
+### Frontend contract
+
+`quizCapabilities()` returns everything the settings UI needs, so no option label, bound
+or type name is hardcoded in two places:
+
+```js
+{
+  requiresApiKey: false,                       // never the key itself
+  questionCount: { min: 1, max: 42, default: 6, step: 1 },
+  types: [
+    { id: 'mcq',   label: 'Multiple choice',     needsGrading: false, default: true },
+    { id: 'cloze', label: 'Fill in the blanks',  needsGrading: false, default: true },
+    { id: 'open',  label: 'Open-ended',          needsGrading: true,  default: true },
+  ],
+  flashcards: { always: true, perTopic: 2 },
+  ceiling: (types) => 14 * max(1, types.length) // topics x types is the hard ceiling
+}
+```
+
+`ceiling(types)` exists because one question per topic per type makes `topics × types` a
+hard limit, so the question-count control should clamp against the selected types rather
+than let the user ask for 40 and silently receive 6.
+
+### Prompt size
+
+Measured, the prompt is **~3,300 characters of fixed instruction plus the slice**, and the
+slice is capped at `maxCharsPerTopic` (12,000):
+
+| session chars | slice chars (median) | prompt chars (median) |
+|---|---|---|
+| 2,471,294 | 11,957 | 15,280 |
+| 1,845,992 | 11,957 | 15,295 |
+| 854,640 | 11,957 | 15,290 |
+| 508 | 1,127 | 4,451 |
+
+So a prompt is ~15,000 characters (~3,800 tokens) and near-constant: it tracks the **cap**,
+not the session. That is the property that makes the cost predictable.
+
 ### Setup
 
 `GEMINI_API_KEY` is read from the environment, then from a gitignored `.env` at the

@@ -39,6 +39,10 @@ export const IPC = {
   GENERATE_QUIZ: 'compat:generate-quiz',
   /** renderer -> main: whether a Gemini key is configured (never the key itself) */
   HAS_API_KEY: 'compat:has-api-key',
+  /** renderer -> main, { id, types? }: can this conversation be quizzed, and why not */
+  READINESS: 'compat:readiness',
+  /** renderer -> main: option bounds, type labels and key state for the settings UI */
+  QUIZ_CAPABILITIES: 'compat:quiz-capabilities',
   /** main -> renderer: generation progress events */
   QUIZ_PROGRESS: 'compat:quiz-progress',
   /** main -> renderer: scan progress events */
@@ -79,6 +83,8 @@ export function registerCompatibilityIpc({ ipcMain, layer, getWindows = () => []
     [IPC.TOPIC_SLICES, (opts) => layer.topicSlices(opts?.id, opts)],
     [IPC.PLAN_QUIZ, (opts) => layer.planQuiz(opts?.id, opts)],
     [IPC.HAS_API_KEY, () => layer.hasApiKey()],
+    [IPC.READINESS, (opts) => layer.assessReadiness(opts?.id, opts)],
+    [IPC.QUIZ_CAPABILITIES, () => layer.quizCapabilities()],
     // Long-running: progress is streamed on QUIZ_PROGRESS while this resolves.
     [IPC.GENERATE_QUIZ, (opts) =>
       layer.generateQuiz(opts?.id, {

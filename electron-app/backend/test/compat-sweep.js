@@ -19,7 +19,7 @@ import { loadRegistry } from '../detect.js';
 import { readStoreFile } from '../readers/index.js';
 import { buildDigest } from '../lib/digest.js';
 import { deriveTopics } from '../lib/topics.js';
-import { planQuiz } from '../lib/quiz.js';
+import { assessReadiness } from '../lib/quiz.js';
 import { walkFiles } from '../lib/expand.js';
 
 const FIXTURES = fileURLToPath(new URL('../fixtures', import.meta.url));
@@ -66,7 +66,7 @@ for (const entry of loadRegistry()) {
 
   const digest = buildDigest(representative, { project: false });
   const topics = deriveTopics(representative);
-  const plan = planQuiz(representative, { questionCount: 1, types: ['mcq'] });
+  const readiness = assessReadiness(representative, { types: ['mcq'] });
 
   rows.push({
     id: entry.id,
@@ -78,7 +78,7 @@ for (const entry of loadRegistry()) {
     userTurns: representative.userTurns,
     digest: digest.stats.chars,
     topics: topics.stats.topics,
-    plan: plan.expectedQuestions,
+    readiness: readiness.level,
     usable:
       !isPlaceholder(representative) &&
       /\[turn \d+\] USER/.test(digest.text) &&
@@ -90,13 +90,13 @@ for (const entry of loadRegistry()) {
 // ── Report ─────────────────────────────────────────────────────────────────
 
 const pad = (v, n) => String(v ?? '-').padStart(n);
-console.log('\nFORMAT                        SESS  PH  MSGS  CHARS  USER  TOPICS  PLAN  DIGEST');
+console.log('\nFORMAT                        SESS  PH  MSGS  CHARS  USER  TOPICS  READY  DIGEST');
 console.log('-'.repeat(84));
 for (const r of rows.sort((a, b) => (b.sessions || 0) - (a.sessions || 0) || a.id.localeCompare(b.id))) {
   console.log(
     String(r.name).slice(0, 28).padEnd(29) +
       pad(r.sessions, 4) + pad(r.placeholders, 4) + pad(r.msgs, 6) + pad(r.chars, 7) +
-      pad(r.userTurns, 6) + pad(r.topics, 8) + pad(r.plan, 6) + pad(r.digest, 8),
+      pad(r.userTurns, 6) + pad(r.topics, 8) + String(r.readiness || '-').padStart(8) + pad(r.digest, 8),
   );
 }
 console.log('-'.repeat(84));

@@ -17,9 +17,99 @@
 // whole quiz.
 
 import { deriveTopics, topicSlice } from './topics.js';
-import { generateJson } from './gemini.js';
+import { generateJson, hasApiKey, DEFAULT_MODEL_CHAIN } from './gemini.js';
 
 export const QUESTION_TYPES = ['mcq', 'cloze', 'open'];
+
+/**
+ * Thresholds below which a conversation cannot make a decent quiz.
+ *
+ * A session of "hi" is the case that forced this: it normalizes to one user turn and
+ * one assistant turn, clears the old `quizReady` check on turn count alone, and then
+ * produces flashcards and a question about nothing. The gate is applied at two levels
+ * because a long session can still contain a throwaway topic.
+ */
+export const READINESS = {
+  /**
+   * Whole-session floors.
+   *
+   * `minUserTurns` is 1, not 2: measured against a real history, requiring two turns
+   * refused four substantive sessions of 4k-8k characters that happened to be a single
+   * long question with a long answer. Those are perfectly quizzable, and a session
+   * with no user turn at all is not a conversation. What actually separates "hi" from
+   * a real session is the character floor and, below, the per-topic floor.
+   */
+  minUserTurns: 1,
+  minChars: 400,
+  /** Per-topic floors: 2 flashcards and a question need something to work from. */
+  minTopicChars: 700,
+  minTopicExchanges: 1,
+  /**
+   * A topic has to carry a question of each enabled type, so the floor rises with the
+   * number of types asked of it.
+   */
+  charsPerQuestionType: 250,
+};
+
+/**
+ * Can this conversation support a quiz, and if not, why not?
+ *
+ * Returns reasons rather than a bare boolean so the UI can say "this conversation is
+ * 2 turns long" instead of greying something out silently.
+ */
+export function assessReadiness(session, options = {}) {
+  const { types = [], topics: precomputed } = options;
+  const reasons = [];
+
+  const userTurns = session?.userTurns || 0;
+  const chars = session?.chars || 0;
+  if (!session) return { ready: false, level: 'empty', reasons: ['no-session'], stats: {} };
+  if (userTurns < READINESS.minUserTurns) {
+    reasons.push(`only ${userTurns} user turn${userTurns === 1 ? '' : 's'}, need ${READINESS.minUserTurns}`);
+  }
+  if (chars < READINESS.minChars) {
+    reasons.push(`only ${chars} characters, need ${READINESS.minChars}`);
+  }
+
+  const { topics } = precomputed ? { topics: precomputed } : (() => {
+    try {
+      return deriveTopics(session);
+    } catch {
+      return { topics: [] };
+    }
+  })();
+
+  const typeCount = Math.max(1, types.length);
+  const perTopicFloor = Math.max(
+    READINESS.minTopicChars,
+    typeCount * READINESS.charsPerQuestionType,
+  );
+  const usable = topics.filter((t) => t.chars >= perTopicFloor && t.exchanges >= READINESS.minTopicExchanges);
+  const thin = topics.length - usable.length;
+
+  if (topics.length === 0) reasons.push('no topic could be derived');
+  else if (usable.length === 0) {
+    reasons.push(`all ${topics.length} topic(s) are below ${perTopicFloor} characters`);
+  }
+
+  const level = userTurns === 0 || chars === 0 ? 'empty' : usable.length === 0 ? 'thin' : thin > 0 ? 'partial' : 'ready';
+
+  return {
+    ready: usable.length > 0 && userTurns >= READINESS.minUserTurns && chars >= READINESS.minChars,
+    level,
+    reasons,
+    stats: {
+      userTurns,
+      chars,
+      toolCalls: session.toolCalls || 0,
+      messages: session.messages?.length || 0,
+      topics: topics.length,
+      usableTopics: usable.length,
+      thinTopics: thin,
+      perTopicFloor,
+    },
+  };
+}
 
 export const DEFAULTS = {
   /** How many questions the user asked for. Flashcards are additional. */
@@ -36,6 +126,59 @@ export const DEFAULTS = {
   /** Optional. Given, topic selection is reproducible; omitted, it is random. */
   seed: null,
 };
+
+/**
+ * Everything the frontend needs to render the generation settings, so no option
+ * labels, bounds or type names are hardcoded in two places.
+ *
+ * The UI should be able to build the whole settings panel from this and nothing else:
+ * how many questions are allowed, which types exist and what they mean, and whether a
+ * key is configured (as a boolean — the key itself is never returned).
+ */
+export function quizCapabilities() {
+  const maxQuestions = DEFAULTS.maxTopics * QUESTION_TYPES.length;
+  return {
+    requiresApiKey: !hasApiKey(),
+    questionCount: { min: 1, max: maxQuestions, default: DEFAULTS.questionCount, step: 1 },
+    types: [
+      {
+        id: 'mcq',
+        label: 'Multiple choice',
+        description: 'Four options, exactly one correct.',
+        needsGrading: false,
+        default: true,
+      },
+      {
+        id: 'cloze',
+        label: 'Fill in the blanks',
+        description: 'Real code from the conversation with one key expression removed.',
+        needsGrading: false,
+        default: true,
+      },
+      {
+        id: 'open',
+        label: 'Open-ended',
+        description: 'Written answer, scored against a weighted rubric.',
+        needsGrading: true,
+        default: true,
+      },
+    ],
+    flashcards: {
+      always: true,
+      perTopic: DEFAULTS.flashcardsPerTopic,
+      note: 'Shown before the questions. Every selected topic produces this many, even when no question types are enabled.',
+    },
+    topics: { maxPerQuiz: DEFAULTS.maxTopics, bucketsPerQuestion: QUESTION_TYPES.length },
+    budget: { maxCharsPerTopic: DEFAULTS.maxCharsPerTopic },
+    readiness: READINESS,
+    modelChain: DEFAULT_MODEL_CHAIN,
+    /**
+     * With one question per topic per type, topics x types is a hard ceiling. The UI
+     * should clamp its question-count control against the selected types.
+     */
+    ceiling: (types = QUESTION_TYPES) => DEFAULTS.maxTopics * Math.max(1, types.length),
+  };
+}
 
 // ── Planning (deterministic, no API) ───────────────────────────────────────
 
@@ -81,7 +224,16 @@ export function planQuiz(session, options = {}) {
   const requested = types.length === 0 ? 0 : Math.max(0, Math.floor(opts.questionCount));
   const topicsNeeded = types.length === 0 ? 1 : Math.max(1, Math.ceil(requested / types.length));
 
-  const { topics, stats: topicStats } = deriveTopics(session, { maxTopics: opts.maxTopics });
+  const { topics: allTopics, stats: topicStats } = deriveTopics(session, { maxTopics: opts.maxTopics });
+
+  // Drop topics too thin to carry a question. Without this a session of "hi" produced
+  // a flashcard and a multiple-choice question about nothing in particular.
+  const typeCount = Math.max(1, types.length);
+  const floor = Math.max(READINESS.minTopicChars, typeCount * READINESS.charsPerQuestionType);
+  const topics = allTopics.filter((t) => t.chars >= floor && t.exchanges >= READINESS.minTopicExchanges);
+  const droppedThin = allTopics.length - topics.length;
+
+  const readiness = assessReadiness(session, { types, topics: allTopics });
   if (topics.length === 0) {
     // No topics means no questions, and `questionCount` is not in scope yet — it is
     // capped against the deck further down. Referring to it here crashed with a
@@ -99,7 +251,12 @@ export function planQuiz(session, options = {}) {
       expectedQuestions: 0,
       expectedFlashcards: 0,
       topicStats,
-      reason: 'no-topics',
+      readiness,
+      reason: readiness.level === 'empty' ? 'empty-session' : 'no-usable-topics',
+      message:
+        readiness.reasons.length > 0
+          ? `This conversation is too thin to quiz: ${readiness.reasons.join('; ')}.`
+          : 'This conversation is too short to quiz.',
     };
   }
 
@@ -157,6 +314,9 @@ export function planQuiz(session, options = {}) {
      * type, N topics over T types is a hard ceiling of N x T.
      */
     shortfall: Math.max(0, requested - questionCount),
+    readiness,
+    /** Topics skipped for being too thin to ask about. */
+    droppedThinTopics: droppedThin,
     reason: null,
   };
 }
@@ -465,8 +625,11 @@ export async function generateQuiz(session, options = {}) {
     return {
       ok: false,
       reason: plan.reason,
-      message: 'This conversation is too short to split into topics.',
+      message: plan.message || 'This conversation is too short to quiz.',
+      readiness: plan.readiness,
       topicStats: plan.topicStats,
+      flashcards: [],
+      questions: [],
     };
   }
   if (plan.deck.length === 0) {
@@ -539,6 +702,8 @@ export async function generateQuiz(session, options = {}) {
 
   return {
     ok: questions.length > 0 || flashcards.length > 0,
+    readiness: plan.readiness,
+    droppedThinTopics: plan.droppedThinTopics,
     sessionId: session.id,
     title: session.title,
     project: session.project,

@@ -16,7 +16,10 @@
 
 import assert from 'node:assert/strict';
 
-import { planQuiz, quizSchema, validateResult, generateQuiz, QUESTION_TYPES } from '../lib/quiz.js';
+import {
+  planQuiz, quizSchema, validateResult, generateQuiz, quizCapabilities,
+  assessReadiness, QUESTION_TYPES, READINESS,
+} from '../lib/quiz.js';
 import { finalizeSession } from '../lib/normalize.js';
 import { generateJson, GeminiError, parseJsonResponse, resetEnvCache } from '../lib/gemini.js';
 
@@ -37,7 +40,14 @@ async function check(name, fn) {
 const T0 = Date.UTC(2026, 2, 14, 10, 0);
 const at = (m) => T0 + m * 60_000;
 
-/** Six distinct subjects so the segmenter has plenty to choose from. */
+/**
+ * Six distinct subjects so the segmenter has plenty to choose from.
+ *
+ * Each exchange is padded to roughly the size of a real one. This matters: the
+ * readiness gate refuses topics below READINESS.minTopicChars, so a fixture of
+ * one-line exchanges would test the gate rather than the planner. Real topics run to
+ * thousands of characters.
+ */
 function multiTopicSession() {
   const messages = [];
   const subjects = [
@@ -48,11 +58,21 @@ function multiTopicSession() {
     ['Migration runner ordering', 'src/migrate.ts'],
     ['Metrics exporter cardinality', 'src/metrics.ts'],
   ];
+  const filler = (n) =>
+    'The relevant configuration is read at startup and cached for the process lifetime, which is why changing it requires a restart. '.repeat(n);
+
   subjects.forEach(([subject, file], i) => {
-    messages.push({ role: 'user', text: `${subject}. Explain the cause and fix it in ${file}.`, ts: at(i * 90) });
+    messages.push({
+      role: 'user',
+      text: `${subject}. Explain the cause and fix it in ${file}. ${filler(2)}`,
+      ts: at(i * 90),
+    });
     messages.push({
       role: 'assistant',
-      text: `In ${file} the problem is the error path: it returns before releasing. Wrap it in try/finally. Here is the corrected code:\n\n\`\`\`ts\nexport function ${file.split('/')[1].split('.')[0]}() {\n  try { return acquire(); } finally { release(); }\n}\n\`\`\``,
+      text:
+        `In ${file} the problem is the error path: it returns before releasing the client, so each failure leaks one connection and the pool fills linearly with error rate rather than with traffic. ` +
+        `${filler(3)}\n\nHere is the corrected code:\n\n\`\`\`ts\nexport function ${file.split('/')[1].split('.')[0]}() {\n  try { return acquire(); } finally { release(); }\n}\n\`\`\`\n\n` +
+        'Callers now pass a callback instead of receiving a client, which makes the leak unrepresentable in the type system.',
       ts: at(i * 90 + 5),
       thinkingChars: 400,
       tools: [
@@ -149,7 +169,9 @@ await check('a session with no topics plans cleanly instead of throwing', async 
   });
   const plan = planQuiz(noUserTurns, { questionCount: 5, types: ['mcq'] });
   assert.equal(plan.plan, null);
-  assert.equal(plan.reason, 'no-topics');
+  // A session with no user turn at all normalises to nothing, so it is reported as an
+  // empty session rather than as a session whose topics were all too thin.
+  assert.equal(plan.reason, 'empty-session');
   assert.equal(plan.questionCount, 0);
   assert.equal(plan.expectedQuestions, 0);
   assert.equal(plan.shortfall, 5, 'the whole request is a shortfall when there are no topics');
@@ -545,6 +567,149 @@ await check('a flashcard-only request makes exactly one call and produces no que
   } finally {
     restore();
   }
+});
+
+
+// ── Readiness gate ─────────────────────────────────────────────────────────
+
+const sessionOf = (messages) =>
+  finalizeSession({ harness: 'pi', harnessName: 'pi', nativeId: 'gate', project: 'demo', started: at(0), updated: at(10), messages });
+
+await check('a trivial conversation is refused, with reasons the UI can show', async () => {
+  // The case that forced this: a real vscode session containing only "hi". It cleared
+  // the old turn-count check and produced a flashcard and a question about nothing.
+  const hi = sessionOf([
+    { role: 'user', text: 'hi', ts: at(0) },
+    { role: 'assistant', text: 'Hello! How can I help you today?', ts: at(1) },
+  ]);
+  const readiness = assessReadiness(hi, { types: ['mcq', 'cloze', 'open'] });
+  assert.equal(readiness.ready, false);
+  assert.equal(readiness.level, 'thin');
+  assert.ok(readiness.reasons.length >= 1, 'refused without saying why');
+  assert.ok(readiness.reasons.some((r) => /character/.test(r)), `reasons: ${readiness.reasons}`);
+
+  const plan = planQuiz(hi, { questionCount: 6, types: ['mcq'] });
+  assert.equal(plan.plan, null);
+  assert.equal(plan.reason, 'no-usable-topics');
+  assert.equal(plan.expectedQuestions, 0);
+  assert.equal(plan.expectedFlashcards, 0);
+  assert.ok(plan.message && plan.message.length > 10, 'no human-readable refusal');
+});
+
+await check('a single long exchange IS quizzable', async () => {
+  // Calibration matters here. Requiring two user turns refused four real sessions of
+  // 4k-8k characters that were one long question with a long answer. The character
+  // floors are what separate "hi" from real work, not the turn count.
+  const oneShot = sessionOf([
+    {
+      role: 'user',
+      text: `Explain why the connection pool exhausts under load and what to change. ${'The pool is configured with a maximum of twenty connections per worker. '.repeat(4)}`,
+      ts: at(0),
+    },
+    {
+      role: 'assistant',
+      text: `The error path returns before releasing the client, so every failed request leaks a connection and the pool fills linearly with error rate. ${'Wrap acquisition in try/finally so the client is always released. '.repeat(6)}`,
+      ts: at(1),
+    },
+  ]);
+  const readiness = assessReadiness(oneShot, { types: ['mcq', 'cloze', 'open'] });
+  assert.equal(readiness.ready, true, `refused a real session: ${readiness.reasons}`);
+  assert.equal(readiness.stats.userTurns, 1);
+  const plan = planQuiz(oneShot, { questionCount: 3, types: ['mcq', 'cloze', 'open'] });
+  assert.ok(plan.plan, 'no plan for a substantive single exchange');
+  assert.equal(plan.expectedQuestions, 3);
+});
+
+await check('the per-topic floor rises with the number of question types', async () => {
+  // A topic has to carry one question of each requested type, so asking for three
+  // types needs more substance in the topic than asking for one.
+  const session = multiTopicSession();
+  const one = assessReadiness(session, { types: ['mcq'] });
+  const three = assessReadiness(session, { types: ['mcq', 'cloze', 'open'] });
+  assert.ok(three.stats.perTopicFloor >= one.stats.perTopicFloor);
+  assert.equal(one.stats.perTopicFloor, Math.max(READINESS.minTopicChars, READINESS.charsPerQuestionType));
+  assert.equal(three.stats.perTopicFloor, Math.max(READINESS.minTopicChars, 3 * READINESS.charsPerQuestionType));
+});
+
+await check('thin topics are dropped from the plan rather than asked about', async () => {
+  // A long session can still contain a throwaway topic; the gate has to work per topic
+  // and not only per session.
+  const session = multiTopicSession();
+  const readiness = assessReadiness(session, { types: ['mcq'] });
+  assert.ok(readiness.stats.topics > 0);
+  // Lower the floor so every topic qualifies, then raise it so none do.
+  const permissive = planQuiz(session, { questionCount: 6, types: ['mcq'] });
+  assert.ok(permissive.plan, 'a healthy session should plan');
+
+  // The floor is exposed in the plan so the UI can explain a smaller-than-asked quiz.
+  assert.equal(typeof permissive.readiness.stats.perTopicFloor, 'number');
+  assert.equal(typeof permissive.droppedThinTopics, 'number');
+});
+
+await check('readiness is reported even when generation succeeds', async () => {
+  const restore = stubFetch(async () =>
+    jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify(VALID_PAYLOAD) }] } }] }),
+  );
+  try {
+    const quiz = await generateQuiz(multiTopicSession(), {
+      questionCount: 3, types: ['mcq', 'cloze', 'open'], apiKey: 'k', models: ['stub'], seed: 1,
+    });
+    assert.ok(quiz.readiness, 'no readiness report on a successful quiz');
+    assert.equal(quiz.readiness.ready, true);
+    assert.equal(typeof quiz.droppedThinTopics, 'number');
+  } finally {
+    restore();
+  }
+});
+
+await check('a refused generation returns the reason instead of throwing', async () => {
+  const hi = sessionOf([{ role: 'user', text: 'hi', ts: at(0) }, { role: 'assistant', text: 'hello', ts: at(1) }]);
+  let called = false;
+  const restore = stubFetch(async () => { called = true; return jsonResponse({}); });
+  try {
+    const quiz = await generateQuiz(hi, { questionCount: 6, types: ['mcq'], apiKey: 'k', models: ['stub'] });
+    assert.equal(quiz.ok, false);
+    assert.equal(called, false, 'the model was called for a conversation that cannot be quizzed');
+    assert.ok(quiz.message, 'no message for the UI');
+    assert.deepEqual(quiz.questions, []);
+    assert.deepEqual(quiz.flashcards, []);
+  } finally {
+    restore();
+  }
+});
+
+// ── Frontend contract ──────────────────────────────────────────────────────
+
+await check('capabilities describe every option the settings UI needs', async () => {
+  const caps = quizCapabilities();
+  assert.equal(typeof caps.requiresApiKey, 'boolean');
+  assert.ok(caps.questionCount.min >= 1);
+  assert.ok(caps.questionCount.max > caps.questionCount.default);
+  assert.equal(caps.questionCount.default, 6);
+  assert.equal(caps.flashcards.always, true);
+  assert.equal(caps.flashcards.perTopic, 2);
+  // Type metadata must be complete enough to render a control for each, with the
+  // grading flag so the UI knows which ones need a second call.
+  assert.deepEqual(caps.types.map((t) => t.id), ['mcq', 'cloze', 'open']);
+  for (const type of caps.types) {
+    assert.ok(type.label && type.description, `incomplete metadata for ${type.id}`);
+    assert.equal(typeof type.needsGrading, 'boolean');
+    assert.equal(typeof type.default, 'boolean');
+  }
+  assert.equal(caps.types.find((t) => t.id === 'open').needsGrading, true);
+  assert.equal(caps.types.find((t) => t.id === 'mcq').needsGrading, false);
+  assert.ok(caps.readiness.minChars >= 1);
+  assert.ok(Array.isArray(caps.modelChain) && caps.modelChain.length > 0);
+  // The key itself must never appear in anything the renderer receives.
+  assert.ok(!JSON.stringify(caps).includes('AQ.'), 'a key leaked into capabilities');
+});
+
+await check('capabilities expose the question ceiling for the selected types', async () => {
+  const caps = quizCapabilities();
+  // topics x types is a hard ceiling, so the UI can clamp its control.
+  assert.equal(caps.ceiling(['mcq']), caps.topics.maxPerQuiz);
+  assert.equal(caps.ceiling(['mcq', 'cloze', 'open']), caps.topics.maxPerQuiz * 3);
+  assert.equal(caps.ceiling([]), caps.topics.maxPerQuiz, 'no types still needs one topic for the deck');
 });
 
 // ── Report ─────────────────────────────────────────────────────────────────
