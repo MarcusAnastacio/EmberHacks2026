@@ -71,6 +71,8 @@ export class CompatibilityLayer extends EventEmitter {
       const saved = this.getStore().saveQuiz(quiz, session, {
         settings: { ...opts, types: quiz.settings?.types },
         redaction: quiz.redaction,
+        // Generated to replace: anything answered belongs to the previous questions.
+        preserveProgress: false,
       });
       return { ...quiz, stored: saved };
     } catch (err) {
@@ -132,10 +134,18 @@ export class CompatibilityLayer extends EventEmitter {
     return scoreBand(percentage);
   }
 
-  /** The label and action for the one button in the top right. */
+  /**
+   * The label and action for the one button in the top right.
+   *
+   * Reads the stored position as well as staleness, so a quiz that is part finished
+   * offers to resume rather than to start over.
+   */
   quizButton(id, opts) {
     const staleness = this.quizStaleness(id, opts);
-    return staleness ? quizButtonState(staleness) : null;
+    if (!staleness) return null;
+    const quiz = this.getStore().getQuizForSession(this.getSession(id)?.id || id);
+    const progress = quiz ? this.quizProgress(quiz.id) : null;
+    return quizButtonState(staleness, progress);
   }
 
   /** Generate only about turns added since the stored quiz, then merge into it. */
@@ -157,7 +167,12 @@ export class CompatibilityLayer extends EventEmitter {
       model: fresh.model,
       settings: { ...previous.settings, ...fresh.settings, producedQuestions: previous.questions.length + fresh.questions.length },
     };
-    const saved = this.getStore().saveQuiz(merged, session, { settings: merged.settings });
+    // Extending keeps the existing questions and adds to them, so the stored answers still
+    // refer to the same questions and the position survives.
+    const saved = this.getStore().saveQuiz(merged, session, {
+      settings: merged.settings,
+      preserveProgress: true,
+    });
     return { ok: true, added: { questions: fresh.questions.length, flashcards: fresh.flashcards.length }, quizId: saved.id, staleness, quiz: merged };
   }
 

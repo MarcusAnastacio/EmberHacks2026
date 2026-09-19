@@ -815,6 +815,27 @@ await check('the prompt forbids em dashes, emojis and decorative punctuation', a
   }
 });
 
+await check('a part finished quiz offers to resume, above everything else', async () => {
+  // Losing your place is worse than a quiz being slightly out of date, so resume outranks
+  // every staleness state, including one whose transcript has since grown.
+  const inProgress = { resumable: true, answers: { a: 1, b: 2 } };
+  for (const state of ['fresh', 'extended', 'diverged', 'settings_changed', 'generator_stale', 'new']) {
+    const button = quizButtonState({ state, newMessages: 5 }, inProgress);
+    assert.equal(button.action, 'resume', `${state} did not offer to resume`);
+    assert.equal(button.label, 'Resume quiz');
+    assert.match(button.reason, /2 answered/);
+  }
+
+  // With nothing answered, staleness decides as before.
+  const untouched = { resumable: false, answers: {} };
+  assert.equal(quizButtonState({ state: 'fresh' }, untouched).action, 'open');
+  assert.equal(quizButtonState({ state: 'extended', newMessages: 1 }, untouched).action, 'configure');
+  assert.equal(quizButtonState({ state: 'new' }, null).action, 'configure');
+
+  // A finished run has nothing pending, so it is not offered as a resume.
+  assert.equal(quizButtonState({ state: 'fresh' }, { resumable: false, answers: {}, completed: true }).action, 'open');
+});
+
 await check('the button label and action follow the workflow', async () => {
   // The product rule in one place, so the UI does not re-derive it from six states.
   assert.deepEqual(quizButtonState({ state: 'new' }), {

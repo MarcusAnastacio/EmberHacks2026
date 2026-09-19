@@ -230,12 +230,13 @@ export class QuizStore {
    * @returns {{id: string, created: boolean}}
    */
   saveQuiz(quiz, session, extra = {}) {
+    const { preserveProgress = false, ...rest } = extra;
     if (!quiz || !session) throw new QuizStoreError('saveQuiz needs a quiz and a session');
     if (!quiz.questions?.length && !quiz.flashcards?.length) {
       throw new QuizStoreError('refusing to save an empty quiz');
     }
 
-    const settings = extra.settings || quiz.settings || {};
+    const settings = rest.settings || quiz.settings || {};
     // Cover everything up to the last turn the quiz drew on. Topics are derived from all
     // messages up to that point, so that is the honest boundary of what has been seen.
     const coveredMessages = Math.max(
@@ -274,7 +275,7 @@ export class QuizStore {
         JSON.stringify(quiz.topicsUsed || []),
         JSON.stringify(quiz.flashcards || []),
         JSON.stringify(quiz.questions || []),
-        JSON.stringify(extra.redaction || quiz.redaction || null),
+        JSON.stringify(rest.redaction || quiz.redaction || null),
       );
 
     // Coverage is replaced, not appended: a regenerated quiz describes the topics it
@@ -287,7 +288,17 @@ export class QuizStore {
       insertCoverage.run(id, topic.id, topic.label || '', JSON.stringify(topic.messageRanges || []));
     }
 
-    return { id, created: !existing };
+    // Whatever was answered was answered against the previous questions.
+    let replacedProgress = null;
+    if (existing && !preserveProgress) {
+      const prior = this.getProgress(id);
+      if (prior?.resumable) {
+        replacedProgress = { stepIndex: prior.stepIndex, answered: Object.keys(prior.answers).length };
+      }
+      this.clearProgress(id);
+    }
+
+    return { id, created: !existing, replacedProgress };
   }
 
   getQuiz(id) {

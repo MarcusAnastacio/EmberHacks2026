@@ -336,6 +336,51 @@ await check('retake clears the position and keeps the score on display', () => {
   store.close();
 });
 
+await check('regenerating clears the position and SAYS what it replaced', () => {
+  // A regenerated quiz lands on the same id when the settings are identical, so without
+  // this the old answers would attach to questions that are no longer the same. Silently
+  // discarding a part finished attempt is the worst outcome of a button called Generate.
+  const store = QuizStore.memory();
+  const s = twoTopicSession();
+  const quiz = fakeQuiz(s);
+  const first = store.saveQuiz(quiz, s, { settings: SETTINGS });
+  store.saveProgress(first.id, { stepIndex: 2, answers: { a: 1, b: 2 }, results: {} });
+
+  const second = store.saveQuiz(quiz, s, { settings: SETTINGS });
+  assert.equal(second.id, first.id, 'the id should be stable for identical settings');
+  assert.equal(second.created, false);
+  assert.deepEqual(second.replacedProgress, { stepIndex: 2, answered: 2 }, 'the caller was not told what was discarded');
+  assert.equal(store.getProgress(first.id).resumable, false, 'the stale position survived');
+  store.close();
+});
+
+await check('regenerating reports nothing when there was nothing to replace', () => {
+  const store = QuizStore.memory();
+  const s = twoTopicSession();
+  const quiz = fakeQuiz(s);
+  const a = store.saveQuiz(quiz, s, { settings: SETTINGS });
+  assert.equal(a.replacedProgress, null, 'a first save reported a replacement');
+  const b = store.saveQuiz(quiz, s, { settings: SETTINGS });
+  assert.equal(b.replacedProgress, null, 'an untouched quiz reported a replacement');
+  store.close();
+});
+
+await check('extending keeps the position, because the questions survive', () => {
+  const store = QuizStore.memory();
+  const s = twoTopicSession();
+  const quiz = fakeQuiz(s);
+  const first = store.saveQuiz(quiz, s, { settings: SETTINGS });
+  store.saveProgress(first.id, { stepIndex: 2, answers: { a: 1, b: 2 }, results: {} });
+
+  const merged = { ...quiz, questions: [...quiz.questions, { id: 'new-mcq-1', type: 'mcq', topicId: 't2', prompt: 'more', explanation: 'e', sourceTurns: [], options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }], correctOptionKey: 'A' }] };
+  store.saveQuiz(merged, s, { settings: SETTINGS, preserveProgress: true });
+
+  const p = store.getProgress(first.id);
+  assert.equal(p.resumable, true, 'extending threw away the position');
+  assert.equal(p.stepIndex, 2);
+  store.close();
+});
+
 await check('progress on an unknown quiz is refused', () => {
   const store = QuizStore.memory();
   assert.throws(() => store.saveProgress('nope', {}), /no quiz/);

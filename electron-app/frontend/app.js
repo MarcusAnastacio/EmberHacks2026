@@ -95,8 +95,9 @@ function render() {
       onExtend: () => generate({ extend: true }),
       onRegenerate: () => generate(),
     });
-    el.generate.disabled = s.busy || s.readiness?.ready === false || (s.options.types.length === 0 && false);
-    el.generate.textContent = s.busy ? 'Generating…' : 'Generate quiz';
+    // The label comes from the backend so the staleness mapping lives in one place.
+    el.generate.disabled = s.busy || (s.button?.action === 'configure' && s.readiness?.ready === false);
+    el.generate.textContent = s.busy ? 'Generating…' : s.button?.label || 'Generate quiz';
   }
 
   if (s.busy && s.progress) el.progress.textContent = s.progress;
@@ -210,6 +211,17 @@ async function updateOptions(options) {
 async function generate({ extend = false } = {}) {
   const s = store.state;
   if (!s.selectedId) return;
+
+  // Generating replaces the stored quiz, and with it any answers given against those
+  // questions. Ask first, because losing a part finished attempt silently is the worst
+  // possible outcome of clicking a button labelled "Generate quiz".
+  if (!extend && s.button?.action === 'resume') {
+    const proceed = window.confirm(
+      `${s.button.reason}\n\nGenerating a new quiz will replace it and you will start from the first question.`,
+    );
+    if (!proceed) return;
+  }
+
   store.set({ busy: true, progress: extend ? 'Adding questions for the new turns…' : 'Reading transcript and generating questions…' });
   render();
 
@@ -226,7 +238,18 @@ async function generate({ extend = false } = {}) {
     steps = toSteps(quiz.quiz || quiz);
     stepIndex = 0;
     responses = {};
-    store.set({ busy: false, progress: '', quiz: quiz.quiz || quiz, stage: 'quiz', attempt: null });
+    const replaced = quiz.stored?.replacedProgress;
+    store.set({
+      busy: false,
+      progress: '',
+      quiz: quiz.quiz || quiz,
+      stage: 'quiz',
+      attempt: null,
+      band: null,
+      notice: replaced
+        ? { level: 'warn', text: `Replaced a part finished quiz, ${replaced.answered} answered.` }
+        : null,
+    });
     render();
     renderCurrentStep();
   } catch (err) {
@@ -249,6 +272,24 @@ async function finishQuiz() {
     }
   }
   store.set({ band, lastScore: { score: summary.score, maxScore: summary.total, percentage: summary.percentage } });
+  renderCurrentStep();
+}
+
+/** Back to where the user was, from the stored position. */
+async function resumeQuiz() {
+  const s = store.state;
+  if (!s.selectedId) return;
+  await restoreQuizFor(s.selectedId);
+  render();
+  renderCurrentStep();
+}
+
+/** Open the stored quiz from the start, with the previous score available. */
+async function openStoredQuiz() {
+  const s = store.state;
+  if (!s.selectedId) return;
+  await restoreQuizFor(s.selectedId);
+  render();
   renderCurrentStep();
 }
 
@@ -374,7 +415,12 @@ function showPane() {
 
 el.refresh.addEventListener('click', () => rescan());
 el.fixtures.addEventListener('click', () => rescan({ fixtures: true }));
-el.generate.addEventListener('click', () => generate());
+el.generate.addEventListener('click', () => {
+  const action = store.state.button?.action;
+  if (action === 'resume') return resumeQuiz();
+  if (action === 'open') return openStoredQuiz();
+  return generate();
+});
 el.showPayload.addEventListener('click', showPayload);
 el.closePayload.addEventListener('click', () => { store.set({ stage: 'idle' }); render(); });
 el.restart.addEventListener('click', () => { store.set({ stage: 'idle' }); render(); });

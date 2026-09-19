@@ -189,11 +189,27 @@ export function scoreBand(percentage) {
  * that quiz went back to offering generation. That mapping is a product rule, so it lives
  * here rather than being re-derived in the UI from six staleness states.
  *
+ * An attempt in progress takes priority over every staleness state. Losing your place is
+ * worse than a quiz being a little out of date, so a part finished quiz offers to resume
+ * even when new content has arrived since it was generated.
+ *
  * @param {object} staleness  the result of QuizStore#staleness
- * @returns {{action:'configure'|'open', label:string, reason:string, staleness:string}}
+ * @param {object} [progress] the result of QuizStore#getProgress
+ * @returns {{action:'configure'|'open'|'resume', label:string, reason:string, staleness:string}}
  */
-export function quizButtonState(staleness) {
+export function quizButtonState(staleness, progress = null) {
   const state = staleness?.state || 'new';
+
+  if (progress?.resumable) {
+    const answered = Object.keys(progress.answers || {}).length;
+    return {
+      action: 'resume',
+      label: 'Resume quiz',
+      reason: `You are partway through this quiz, ${answered} answered.`,
+      staleness: state,
+    };
+  }
+
   switch (state) {
     case 'fresh':
       return {
