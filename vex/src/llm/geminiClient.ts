@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 const preferredModels = [
 	'gemini-3.8-flash',
 	'gemini-3.7-flash',
@@ -10,6 +12,8 @@ const preferredModels = [
 
 const maxTransientAttempts = 3;
 const transientRetryDelays = [1000, 2500, 5000];
+const modelListTtlMilliseconds = 10 * 60 * 1000;
+const modelListCache = new Map<string, { models: string[]; expiresAt: number }>();
 
 export async function generateText(apiKey: string, prompt: string): Promise<string> {
 	const body = JSON.stringify({
@@ -33,6 +37,13 @@ export async function generateText(apiKey: string, prompt: string): Promise<stri
 }
 
 async function listGenerateContentModels(apiKey: string): Promise<string[]> {
+	// Keyed by a hash (not the raw key) so the short-lived cache never persists the credential itself.
+	const cacheKey = hashApiKey(apiKey);
+	const cached = modelListCache.get(cacheKey);
+	if (cached && cached.expiresAt > Date.now()) {
+		console.info('[VEX Gemini] model list retrieved from in-memory cache; skipped model discovery request.');
+		return cached.models;
+	}
 	try {
 		const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
 		const data = await response.text();
@@ -40,17 +51,24 @@ async function listGenerateContentModels(apiKey: string): Promise<string[]> {
 			throw new Error(formatGeminiError(response.status, data, 'model discovery'));
 		}
 		const parsed = JSON.parse(data) as { models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> };
-		return parsed.models
+		const models = parsed.models
 			?.filter(model => model.supportedGenerationMethods?.includes('generateContent'))
 			.map(model => model.name?.replace(/^models\//, ''))
 			.filter((model): model is string => Boolean(model))
 			.filter(isTextGenerationModel) ?? [];
+		modelListCache.set(cacheKey, { models, expiresAt: Date.now() + modelListTtlMilliseconds });
+		console.info('[VEX Gemini] model list generated via discovery request.');
+		return models;
 	} catch (error) {
 		if (error instanceof Error && error.message.startsWith('Gemini ')) {
 			throw error;
 		}
 		throw new Error(`Could not reach Gemini: ${error instanceof Error ? error.message : 'network request failed'}`);
 	}
+}
+
+function hashApiKey(apiKey: string): string {
+	return createHash('sha256').update(apiKey, 'utf8').digest('hex');
 }
 
 function isTextGenerationModel(model: string): boolean {

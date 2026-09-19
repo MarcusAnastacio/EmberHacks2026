@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { CodeSymbol } from './codeSymbol';
 
+/** Caps how much source text is analyzed/hashed per file to keep very large files fast. */
+export const maxAnalyzedSourceCharacters = 50000;
+
 export interface ActiveFileAnalysis {
 	activeFilePath: string;
 	programmingLanguage: string;
@@ -31,7 +34,7 @@ export async function analyzeActiveFile(editor: vscode.TextEditor): Promise<Acti
 	return {
 		activeFilePath: editor.document.uri.fsPath,
 		programmingLanguage: editor.document.languageId,
-		relevantSourceCode: (selectedCode || editor.document.getText()).slice(0, 50000),
+		relevantSourceCode: (selectedCode || editor.document.getText()).slice(0, maxAnalyzedSourceCharacters),
 		selectedCode: selectedCode || undefined,
 		relatedSymbols: relatedSymbols?.length ? relatedSymbols : undefined,
 		codeSymbols,

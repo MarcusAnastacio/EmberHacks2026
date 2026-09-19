@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { analyzeActiveFile } from '../analysis/activeFileAnalyzer';
+import { analyzeActiveFile, maxAnalyzedSourceCharacters } from '../analysis/activeFileAnalyzer';
 import { analyzeAgentChanges } from '../analysis/gitChangeAnalyzer';
 import { WorkspaceContextAnalyzer } from '../analysis/workspaceContextAnalyzer';
 import { LearningContext } from './learningContext';
@@ -10,11 +10,15 @@ import { ActiveFileAnalysis } from '../analysis/activeFileAnalyzer';
 import { WorkspaceContextAnalysis } from '../analysis/workspaceContextAnalyzer';
 
 export async function buildLearningContext(editor: vscode.TextEditor, agentSummary?: AgentSummary, learnerProfile?: LearnerProfile, cache?: CacheStore): Promise<LearningContext> {
+	// Hash only what analysis actually consumes (source is truncated the same way) plus the true length,
+	// so hashing stays cheap on very large files while still invalidating on truncation-boundary changes.
+	const fullSource = editor.document.getText();
 	const sourceHash = hashContent(JSON.stringify({
 		path: editor.document.uri.fsPath,
 		language: editor.document.languageId,
-		source: editor.document.getText(),
-		selection: editor.document.getText(editor.selection),
+		source: fullSource.slice(0, maxAnalyzedSourceCharacters),
+		sourceLength: fullSource.length,
+		selection: editor.document.getText(editor.selection).slice(0, maxAnalyzedSourceCharacters),
 	}));
 	const analysisKey = `analysis.${sourceHash}`;
 	const cachedAnalysis = cache?.get<ActiveFileAnalysis>(analysisKey);

@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
 
-const cachePrefix = 'vex.cache.';
-const cacheIndexKey = 'vex.cache.index';
+// Bump this when cached object shapes change, so upgrading the extension can't return stale/incompatible entries.
+const cacheSchemaVersion = 'v2';
+const cachePrefix = `vex.cache.${cacheSchemaVersion}.`;
+const cacheIndexKey = `vex.cache.${cacheSchemaVersion}.index`;
 const maxCacheEntries = 100;
 
 export function hashContent(value: string): string {

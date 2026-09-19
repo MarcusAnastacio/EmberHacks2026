@@ -39,7 +39,12 @@ export async function generateQuiz(
 
 function parseQuiz(text: string, context: LearningContext): Quiz {
 	const jsonText = text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-	const quiz = JSON.parse(jsonText) as Quiz;
+	let quiz: Quiz;
+	try {
+		quiz = JSON.parse(jsonText) as Quiz;
+	} catch {
+		throw new Error('Gemini returned malformed JSON instead of a quiz. Try generating it again.');
+	}
 	if (!quiz.title || !quiz.overview || !Array.isArray(quiz.questions) || quiz.questions.length !== 5) {
 		throw new Error('Gemini returned a quiz that does not contain exactly 5 questions. Try generating it again.');
 	}

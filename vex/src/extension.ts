@@ -10,6 +10,8 @@ import { LearningHistoryStore } from './learning/learningHistory';
 import { CacheStore } from './cache/cacheStore';
 
 const geminiKeySecret = 'vex.geminiApiKey';
+// Prevents duplicate concurrent Gemini requests from rapid repeated command/button invocations.
+let quizGenerationInFlight = false;
 
 export function activate(context: vscode.ExtensionContext): void {
 	const learningHistory = new LearningHistoryStore(context.workspaceState);
@@ -67,6 +69,10 @@ async function generateQuizForActiveEditor(
 	mode: QuizMode,
 	bypassCache = false,
 ): Promise<void> {
+	if (quizGenerationInFlight) {
+		quizView.renderStatus('A quiz is already being generated. Please wait for it to finish.', 'error');
+		return;
+	}
 	const editor = vscode.window.activeTextEditor;
 	if (!editor) {
 		quizView.renderStatus('Open a code file first, then generate the quiz.', 'error');
@@ -83,18 +89,21 @@ async function generateQuizForActiveEditor(
 		}
 	}
 
-	const agentSummary = context.workspaceState.get<AgentSummary>('vex.agentSummary');
-	const learnerProfile = learningHistory.getProfile();
-	const learningContext = await buildLearningContext(editor, agentSummary, learnerProfile, cache);
-	const sourceName = learningContext.activeFilePath.split(/[\\/]/).pop() ?? 'active editor';
-	quizView.renderStatus('Gemini is building a lesson from your code...');
+	quizGenerationInFlight = true;
 	try {
+		const agentSummary = context.workspaceState.get<AgentSummary>('vex.agentSummary');
+		const learnerProfile = learningHistory.getProfile();
+		const learningContext = await buildLearningContext(editor, agentSummary, learnerProfile, cache);
+		const sourceName = learningContext.activeFilePath.split(/[\\/]/).pop() ?? 'active editor';
+		quizView.renderStatus('Gemini is building a lesson from your code...');
 		const quiz = await generateQuiz(apiKey, learningContext, mode, { cache, bypassCache, questionCount: 5 });
 		quizView.renderQuiz(quiz, sourceName);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Quiz generation failed.';
 		quizView.renderStatus(message, 'error');
 		void vscode.window.showErrorMessage(`VEX: ${message}`);
+	} finally {
+		quizGenerationInFlight = false;
 	}
 }
 
