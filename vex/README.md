@@ -105,3 +105,9 @@ Each quiz question may include a validated reference to a file, symbol, and one-
 VEX stores quiz attempts locally in VS Code workspace state. Each attempt contains only the question, concept, correctness, difficulty, timestamp, and associated file/project. The store is bounded to the most recent 200 attempts.
 
 Before generating a quiz, VEX derives a compact learner profile containing understood concepts, frequently missed concepts, recent topics, and an approximate difficulty level. Only that profile is included in the Gemini context; the complete learning history is never transmitted. Repeated misses increase the priority of that concept, while consistently correct concepts are eligible for fewer basic questions.
+
+## Gemini Request Caching
+
+VEX hashes active source, bounded project structure, Git changes, learner profile, agent summary, and context settings. It locally caches active-file analysis, project structure, assembled learning contexts, and validated quizzes in VS Code workspace state. API keys are never cached or included in cache keys.
+
+Normal quiz generation reuses a cached quiz when the relevant context, mode/difficulty, learner profile, and five-question count are unchanged. Use **VEX: Regenerate Quiz (Bypass Cache)** or the **Regenerate quiz** button to force a new Gemini request. Cache decisions are logged under `[VEX Gemini]` and `[VEX cache]`.

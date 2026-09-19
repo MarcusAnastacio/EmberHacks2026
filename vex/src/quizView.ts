@@ -3,7 +3,7 @@ import { CodeReference, Quiz, QuizMode } from './quiz/models';
 import { QuestionDifficulty } from './learning/learningHistory';
 
 export interface QuizViewMessage {
-	command: 'generate' | 'setKey' | 'viewCode' | 'answer';
+	command: 'generate' | 'regenerate' | 'setKey' | 'viewCode' | 'answer';
 	mode?: QuizMode;
 	reference?: CodeReference;
 	question?: string;
@@ -18,7 +18,7 @@ export class QuizViewProvider implements vscode.WebviewViewProvider {
 
 	public constructor(
 		private readonly extensionUri: vscode.Uri,
-		private readonly onGenerate: (mode: QuizMode) => Promise<void>,
+		private readonly onGenerate: (mode: QuizMode, bypassCache?: boolean) => Promise<void>,
 		private readonly onSetKey: () => Promise<void>,
 		private readonly onViewCode: (reference: CodeReference) => Promise<void>,
 		private readonly onAnswer: (message: QuizViewMessage) => Promise<void>,
@@ -30,7 +30,10 @@ export class QuizViewProvider implements vscode.WebviewViewProvider {
 		view.webview.html = this.getHtml(view.webview);
 		view.webview.onDidReceiveMessage(async (message: QuizViewMessage) => {
 			if (message.command === 'generate' && message.mode) {
-				await this.onGenerate(message.mode);
+				await this.onGenerate(message.mode, false);
+			}
+			if (message.command === 'regenerate' && message.mode) {
+				await this.onGenerate(message.mode, true);
 			}
 			if (message.command === 'setKey') {
 				await this.onSetKey();
@@ -100,6 +103,7 @@ button.secondary { color: var(--ink); background: transparent; border: 1px solid
 <label for="mode">Teaching mode</label>
 <select id="mode"><option value="guided">Guided tour</option><option value="architecture">Architecture lens</option><option value="challenge">Challenge mode</option></select>
 <button id="generate">Generate quiz</button>
+<button class="secondary" id="regenerate">Regenerate quiz</button>
 <button class="secondary" id="setKey">Set Gemini API key</button>
 <div id="status" role="status"></div>
 </section>
@@ -112,6 +116,11 @@ document.getElementById('generate').addEventListener('click', () => {
 	status.textContent = 'Reading the active editor and asking Gemini...';
 	status.className = '';
 	vscode.postMessage({ command: 'generate', mode: document.getElementById('mode').value });
+});
+document.getElementById('regenerate').addEventListener('click', () => {
+	status.textContent = 'Regenerating the quiz...';
+	status.className = '';
+	vscode.postMessage({ command: 'regenerate', mode: document.getElementById('mode').value });
 });
 document.getElementById('setKey').addEventListener('click', () => vscode.postMessage({ command: 'setKey' }));
 window.addEventListener('message', event => {

@@ -7,15 +7,17 @@ import { registerAgentSummaryParticipant } from './chat/agentSummaryParticipant'
 import { AgentSummary } from './context/agentSummary';
 import { CodeReference } from './quiz/models';
 import { LearningHistoryStore } from './learning/learningHistory';
+import { CacheStore } from './cache/cacheStore';
 
 const geminiKeySecret = 'vex.geminiApiKey';
 
 export function activate(context: vscode.ExtensionContext): void {
 	const learningHistory = new LearningHistoryStore(context.workspaceState);
+	const cache = new CacheStore(context.workspaceState);
 	let quizView: QuizViewProvider;
 	quizView = new QuizViewProvider(
 		context.extensionUri,
-		mode => generateQuizForActiveEditor(context, learningHistory, quizView, mode),
+		(mode, bypassCache) => generateQuizForActiveEditor(context, learningHistory, cache, quizView, mode, bypassCache),
 		() => setGeminiApiKey(context, quizView),
 		reference => viewCodeReference(reference),
 		message => recordAnswer(context, learningHistory, message),
@@ -31,7 +33,12 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('vex.generateQuiz', async () => {
 			await vscode.commands.executeCommand('vex.quizView.focus');
 			quizView.show();
-			await generateQuizForActiveEditor(context, learningHistory, quizView, 'guided');
+			await generateQuizForActiveEditor(context, learningHistory, cache, quizView, 'guided', false);
+		}),
+		vscode.commands.registerCommand('vex.regenerateQuiz', async () => {
+			await vscode.commands.executeCommand('vex.quizView.focus');
+			quizView.show();
+			await generateQuizForActiveEditor(context, learningHistory, cache, quizView, 'guided', true);
 		}),
 		vscode.commands.registerCommand('vex.setGeminiApiKey', () => setGeminiApiKey(context, quizView)),
 	);
@@ -55,8 +62,10 @@ async function setGeminiApiKey(context: vscode.ExtensionContext, quizView: QuizV
 async function generateQuizForActiveEditor(
 	context: vscode.ExtensionContext,
 	learningHistory: LearningHistoryStore,
+	cache: CacheStore,
 	quizView: QuizViewProvider,
 	mode: QuizMode,
+	bypassCache = false,
 ): Promise<void> {
 	const editor = vscode.window.activeTextEditor;
 	if (!editor) {
@@ -76,11 +85,11 @@ async function generateQuizForActiveEditor(
 
 	const agentSummary = context.workspaceState.get<AgentSummary>('vex.agentSummary');
 	const learnerProfile = learningHistory.getProfile();
-	const learningContext = await buildLearningContext(editor, agentSummary, learnerProfile);
+	const learningContext = await buildLearningContext(editor, agentSummary, learnerProfile, cache);
 	const sourceName = learningContext.activeFilePath.split(/[\\/]/).pop() ?? 'active editor';
 	quizView.renderStatus('Gemini is building a lesson from your code...');
 	try {
-		const quiz = await generateQuiz(apiKey, learningContext, mode);
+		const quiz = await generateQuiz(apiKey, learningContext, mode, { cache, bypassCache, questionCount: 5 });
 		quizView.renderQuiz(quiz, sourceName);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Quiz generation failed.';

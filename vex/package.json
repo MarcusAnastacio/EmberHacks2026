@@ -22,6 +22,10 @@
         "title": "VEX: Generate Quiz from Current File"
       },
       {
+        "command": "vex.regenerateQuiz",
+        "title": "VEX: Regenerate Quiz (Bypass Cache)"
+      },
+      {
         "command": "vex.setGeminiApiKey",
         "title": "VEX: Set Gemini API Key"
       }

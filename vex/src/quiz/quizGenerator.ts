@@ -3,14 +3,38 @@ import { generateText } from '../llm/geminiClient';
 import { buildQuizPrompt } from '../llm/prompts';
 import { CodeReference, Quiz, QuizMode } from './models';
 import { CodeSymbol } from '../analysis/codeSymbol';
+import { CacheStore, hashContent } from '../cache/cacheStore';
+import { buildGeminiContext } from '../context/contextSelector';
+
+export interface QuizGenerationOptions {
+	cache?: CacheStore;
+	bypassCache?: boolean;
+	questionCount?: number;
+}
 
 export async function generateQuiz(
 	apiKey: string,
 	learningContext: LearningContext,
 	mode: QuizMode,
+	options: QuizGenerationOptions = {},
 ): Promise<Quiz> {
+	const questionCount = options.questionCount ?? 5;
+	const contextHash = hashContent(buildGeminiContext(learningContext));
+	const profileHash = hashContent(JSON.stringify(learningContext.learnerProfile ?? {}));
+	const cacheKey = `quiz.${hashContent(JSON.stringify({ contextHash, mode, difficulty: learningContext.learnerProfile?.approximateDifficulty ?? 'medium', profileHash, questionCount }))}`;
+	if (!options.bypassCache) {
+		const cachedQuiz = options.cache?.get<Quiz>(cacheKey);
+		if (cachedQuiz) {
+			console.info('[VEX cache] retrieved quiz; relevant context unchanged.');
+			console.info('[VEX Gemini] request retrieved from cache; skipped because no relevant changes occurred.');
+			return cachedQuiz;
+		}
+	}
 	const response = await generateText(apiKey, buildQuizPrompt(learningContext, mode));
-	return parseQuiz(response, learningContext);
+	const quiz = parseQuiz(response, learningContext);
+	await options.cache?.set(cacheKey, quiz);
+	console.info(options.bypassCache ? '[VEX Gemini] request generated; quiz cache bypassed.' : '[VEX Gemini] request generated; no matching quiz cache entry.');
+	return quiz;
 }
 
 function parseQuiz(text: string, context: LearningContext): Quiz {
