@@ -261,6 +261,8 @@ electron-app/backend/
 │   └── generate-example.js  #  Builds a synthetic project + session and writes it.
 │
 ├── test/
+│   ├── windows.test.js   #   18 assertions covering the Windows path rules, runnable on
+│   │                     #     any platform because the platform is an input.
 │   ├── readers.test.js   #   11 assertions over format routing and the per-format quirks
 │   │                     #     that the sweep found. See Format compatibility.
 │   ├── compat-sweep.js   #   `npm run compat`: every fixture format through the full
@@ -579,6 +581,58 @@ For a worked example of the whole pipeline with the process spelled out, see
 `npm run docs:example` from a synthetic project and session, so it contains nothing
 private and cannot go stale.
 
+## Windows
+
+Supported, and **testable from Linux or macOS**: the platform is an input to the path
+layer rather than an ambient fact, so every Windows rule is reachable from a test.
+
+```js
+platformContext({ platform: 'win32', home: 'C:/Users/dev', env: { APPDATA: '...' } })
+```
+
+That refactor is the point. Code reading `process.platform` directly cannot be verified
+without a Windows machine, and none of the Windows rules below would have been checked.
+
+### What differs, per platform
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| editor data root | `%APPDATA%` | `~/Library/Application Support` | `$XDG_CONFIG_HOME` or `~/.config` |
+| home | `%USERPROFILE%`, or `%HOMEDRIVE%%HOMEPATH%` | `$HOME` | `$HOME` |
+| separators | both accepted; all output normalised to `/` | `/` | `/` |
+| case | **insensitive** | sensitive | sensitive |
+
+`<vscode-User>` therefore resolves to the right place on all three, and fans out over
+VS Code, Insiders, VSCodium, Cursor, Windsurf, Trae and PearAI on each.
+
+### The bugs this fixed
+
+| Bug | Effect |
+|---|---|
+| `new URL(import.meta.url).pathname` yields `/C:/Users/...` on Windows | Any filesystem call using it failed. Six call sites, including `FIXTURE_ROOT` and the `.env` lookup. Now `fileURLToPath`. |
+| Tool-reported paths were compared with `p.startsWith(cwd)` and exact string equality | Windows tool calls arrive as `C:\proj\src\db.ts`, so **no file was ever recognised as touched** — an empty "files modified" list and a project section with nothing to focus on. |
+| Windows is case-insensitive and matching was not | `C:\Proj\Src\db.ts` and `c:\proj\src\db.ts` are one file; exact matching treated them as two. |
+| UNC paths (`\\server\share\x.ts`) had their leading slashes stripped before the absolute check | `\\server\share\proj\x.ts` became the *relative* path `server/share/proj/x.ts` inside the project. |
+| Cursor and Goose declared macOS and Linux stores only | On Windows both live under `%APPDATA%` and neither was found. Added via `EXTRA_STORE_PATHS`, **merged into the existing entry** so the sidebar does not show two rows with the same name. |
+
+### Paths are normalised to forward slashes everywhere
+
+Including on Windows. Windows accepts `/` in every filesystem call, whereas a glob
+pattern containing a backslash is ambiguous — minimatch reads it as an escape — so a
+mixed-separator pattern is the risky form. A test asserts that no harness produces a
+backslash in any pattern on Windows.
+
+### Testing it
+
+```bash
+npm test          # includes test/windows.test.js — 18 assertions, runs anywhere
+```
+
+The suite covers the per-platform data roots, `%APPDATA%` and `%LOCALAPPDATA%`,
+`${VAR:-default}` including the nested form Cline uses, `~`, `<app data>`, backslash and
+drive-letter paths, case-insensitive matching, UNC rejection, and that an absolute path
+outside the working directory is refused rather than silently made relative.
+
 ## Quiz generation
 
 The product workflow: the conversation is split into topics **deterministically**
@@ -720,6 +774,9 @@ list of false-positive classes.
 - **Tool output is excluded by default.** Measured at 98% of the bytes in a coding session,
   it is almost never what a quiz should ask about, so `finalizeSession` drops the bodies and
   keeps a `toolCalls` count. Pass `{ keepToolOutput: true }` to retain them.
+- **Windows is not verified on real hardware.** The path rules are unit-tested with an
+  injected platform context, which covers expansion and matching, but nothing has run
+  against an actual Windows filesystem or a real Windows agent store.
 - **Three formats are detected but not decoded** (`opencode`, `crush`, `zed`): their
   message text lives in a sibling SQLite table the generic reader does not join. The store
   is reported in the sidebar rather than hidden, but no conversation comes out of it.

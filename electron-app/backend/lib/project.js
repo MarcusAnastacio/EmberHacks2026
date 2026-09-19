@@ -164,7 +164,11 @@ export function lastCommitsFor(root, files, { limit = 8 } = {}) {
  * shape of the project is visible without listing a whole source tree.
  */
 export function renderTree(root, { relevant = [], maxDepth = 4, maxEntries = 220 } = {}) {
-  const relevantSet = new Set(relevant.map((p) => p.replace(/^\.\//, '')));
+  // Windows is case-insensitive, so `Src/db.ts` and `src/db.ts` are one file. Folding
+  // for the membership test keeps a touched file marked in the tree; the original
+  // spelling is what gets displayed.
+  const caseFold = process.platform === 'win32' ? (s) => s.toLowerCase() : (s) => s;
+  const relevantSet = new Set(relevant.map((p) => caseFold(p.replace(/^\.\//, ''))));
   const marked = new Set();
   // Ancestors of relevant files get walked to full depth so their contents show.
   const deepPrefixes = new Set();
@@ -201,7 +205,7 @@ export function renderTree(root, { relevant = [], maxDepth = 4, maxEntries = 220
     for (const item of shown) {
       entries++;
       const rel = prefix ? `${prefix}/${item.name}` : item.name;
-      const isRelevant = relevantSet.has(rel);
+      const isRelevant = relevantSet.has(caseFold(rel));
       if (isRelevant) marked.add(rel);
       lines.push(`${'  '.repeat(depth)}${item.name}${item.isDirectory() ? '/' : ''}${isRelevant ? '   <- touched' : ''}`);
       // Descend when this directory can contain something relevant, or when we

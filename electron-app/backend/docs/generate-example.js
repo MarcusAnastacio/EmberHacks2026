@@ -16,13 +16,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 import { buildDigest, extractTouched } from '../lib/digest.js';
 import { finalizeSession } from '../lib/normalize.js';
 import { deriveTopics, topicSlices } from '../lib/topics.js';
 
-const OUT = path.join(path.dirname(new URL(import.meta.url).pathname), 'example-digest.md');
+const OUT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'example-digest.md');
 
 // The project is built in a temp directory because that is what a test fixture
 // should do, but a real path from a real run must not end up in the repository.

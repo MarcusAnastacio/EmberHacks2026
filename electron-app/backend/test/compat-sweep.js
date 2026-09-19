@@ -13,6 +13,7 @@
 // Run it after touching anything in readers/.
 
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { loadRegistry } from '../detect.js';
 import { readStoreFile } from '../readers/index.js';
@@ -21,7 +22,7 @@ import { deriveTopics } from '../lib/topics.js';
 import { planQuiz } from '../lib/quiz.js';
 import { walkFiles } from '../lib/expand.js';
 
-const FIXTURES = new URL('../fixtures', import.meta.url).pathname;
+const FIXTURES = fileURLToPath(new URL('../fixtures', import.meta.url));
 const ALIAS = { claude: 'claude-code', copilot_chat: 'copilot-chat' };
 
 const isPlaceholder = (s) => (s.messages[0]?.text || '').startsWith('[Detected');

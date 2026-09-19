@@ -19,6 +19,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -57,7 +58,7 @@ function parseEnv(text) {
 
 /** Candidate .env locations: the working directory, then up from this file. */
 function envCandidates() {
-  const here = path.dirname(new URL(import.meta.url).pathname);
+  const here = path.dirname(fileURLToPath(import.meta.url));
   return [
     path.join(process.cwd(), '.env'),
     path.join(here, '..', '..', '.env'),      // electron-app/.env

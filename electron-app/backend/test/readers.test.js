@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { readStoreFile } from '../readers/index.js';
 
@@ -25,7 +26,7 @@ function check(name, fn) {
   }
 }
 
-const FIXTURES = new URL('../fixtures', import.meta.url).pathname;
+const FIXTURES = fileURLToPath(new URL('../fixtures', import.meta.url));
 const read = (rel, ctx) =>
   readStoreFile(path.join(FIXTURES, rel), { harness: 'test', harnessName: 'test', ...ctx });
 

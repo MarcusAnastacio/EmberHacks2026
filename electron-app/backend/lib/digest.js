@@ -26,6 +26,7 @@
 // See docs/quiz-design.md §2 for how this feeds topic segmentation and generation.
 
 import path from 'node:path';
+import { foldPath, relativeToRoot, toPosix } from './expand.js';
 import {
   collectDocs,
   collectManifests,
@@ -77,16 +78,17 @@ function pick(input, keys) {
   return null;
 }
 
-/** Normalise a path argument to something repo-relative and comparable. */
+/**
+ * Normalise a tool-reported path to something repo-relative and comparable.
+ *
+ * Delegates to relativeToRoot so Windows forms are handled in one place: backslash
+ * separators, drive letters, UNC prefixes, and the case-insensitivity of the
+ * Windows filesystem.
+ */
 function normalizePath(value, cwd) {
-  if (!value) return null;
-  let p = value.replace(/^["']|["']$/g, '').trim();
-  if (!p || p.length > 240 || /[\n\r]/.test(p)) return null;
-  if (cwd && p.startsWith(cwd)) p = p.slice(cwd.length);
-  p = p.replace(/^\.\//, '').replace(/^\/+/, '');
-  // Reject things that are clearly not paths in this repo.
-  if (!p || p === '.' || p.startsWith('..')) return null;
-  return p;
+  const rel = relativeToRoot(value, cwd, { caseInsensitive: process.platform === 'win32' });
+  if (!rel || rel.length > 240) return null;
+  return rel;
 }
 
 /**
@@ -136,7 +138,8 @@ export function extractTouched(session) {
   // Paths mentioned in prose, e.g. "the bug is in app/db.py:41". Secondary source:
   // only accepted with a file extension, and only when it looks like a path.
   const mentioned = new Map();
-  const prosePath = /(?:^|[\s`'"(])([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+\.[A-Za-z0-9]{1,6})(?::\d+)?/g;
+  // Separators may be `/` or `\`, and a Windows path may carry a drive letter.
+  const prosePath = /(?:^|[\s`'"(])((?:[A-Za-z]:[\\/])?[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+\.[A-Za-z0-9]{1,6})(?::\d+)?/g;
   for (const message of session.messages) {
     if (message.role !== 'assistant') continue;
     for (const m of message.text.matchAll(prosePath)) {
