@@ -311,6 +311,116 @@ check('a slice reports what it dropped rather than hiding it', () => {
   }
 });
 
+// ── Splitting below the exchange level ─────────────────────────────────────
+
+/** A session shaped like a long autonomous agent run: one prompt, many agent turns. */
+function agentRunSession({ userChars = 200, assistantMessages = 6, assistantChars = 9000 } = {}) {
+  const messages = [{ role: 'user', text: `Investigate the failure and fix it. ${'x'.repeat(userChars)}`, ts: at(0) }];
+  for (let i = 0; i < assistantMessages; i++) {
+    messages.push({
+      role: 'assistant',
+      text: `Step ${i + 1}. ${'Working through the details of the failure mode. '.repeat(Math.ceil(assistantChars / 47))}`,
+      ts: at(i + 1),
+      tools: [{ name: 'bash', input: { command: `step ${i + 1}` } }],
+    });
+  }
+  return finalizeSession({
+    harness: 'pi', harnessName: 'pi', nativeId: 'run', project: 'demo',
+    started: at(0), updated: at(assistantMessages + 1), messages,
+  });
+}
+
+check('a single-exchange agent run is split at message boundaries', () => {
+  // The case exchange-level splitting cannot reach: one user turn followed by a long
+  // autonomous run. Every boundary candidate was between exchanges, and there is only
+  // one exchange, so a segment like this was previously unsplittable however large.
+  const session = agentRunSession({ assistantMessages: 6, assistantChars: 9000 });
+  const { topics } = deriveTopics(session, { maxTopics: 40, maxSegmentChars: 12000 });
+  assert.ok(topics.length > 1, `expected the run to be split, got ${topics.length} topic(s)`);
+  for (const t of topics) {
+    assert.ok(t.chars <= 12000 + 200, `topic ${t.id} is ${t.chars} chars, over the target`);
+    assert.ok(t.subSplit, `topic ${t.id} should be marked as a size split`);
+  }
+  // Consecutive pieces must tile the session: either the next one starts on the message
+  // after the previous one ended, or — when a single message was cut by character range —
+  // it continues where the previous piece's text stopped.
+  const sorted = [...topics].sort(
+    (a, b) => a.from - b.from || (a.charFrom ?? -1) - (b.charFrom ?? -1),
+  );
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1];
+    const next = sorted[i];
+    // Starting on the next message continues the previous piece regardless of whether
+    // that next message is itself cut into sub-ranges.
+    const continuesMessage = next.from === prev.to + 1;
+    const continuesText = next.from === prev.to && next.charFrom === prev.charTo;
+    assert.ok(
+      continuesMessage || continuesText,
+      `piece ${i} (msg ${next.from}, char ${next.charFrom}) does not continue piece ${i - 1} (msg ${prev.to}, char ${prev.charTo})`,
+    );
+  }
+});
+
+check('a single oversized message is split by character range', () => {
+  // No message boundary exists inside one message, so the only way to make its whole
+  // content reachable across prompts is to cut inside it.
+  const session = agentRunSession({ assistantMessages: 1, assistantChars: 40000 });
+  const { topics } = deriveTopics(session, { maxTopics: 40, maxSegmentChars: 10000 });
+  const intra = topics.filter((t) => t.charFrom !== undefined);
+  assert.ok(intra.length > 1, `expected an intra-message split, got ${intra.length}`);
+  for (const t of intra) {
+    assert.equal(t.from, t.to, 'an intra-message piece should cover one message');
+    assert.ok(t.charTo > t.charFrom);
+    assert.ok(t.chars <= 10000 + 200, `piece is ${t.chars} chars`);
+  }
+  // The pieces must together cover the message, not just its beginning.
+  const total = intra.reduce((n, t) => n + (t.charTo - t.charFrom), 0);
+  const message = session.messages.find((m) => m.text.length > 30000);
+  assert.ok(total >= message.text.length * 0.9, `pieces cover ${total} of ${message.text.length}`);
+});
+
+check('an intra-message split yields a usable slice, not the whole message', () => {
+  const session = agentRunSession({ assistantMessages: 1, assistantChars: 30000 });
+  const { topics } = deriveTopics(session, { maxTopics: 40, maxSegmentChars: 8000 });
+  const intra = topics.filter((t) => t.charFrom !== undefined);
+  assert.ok(intra.length > 0);
+  const slice = topicSlice(session, intra[0], { maxChars: 4000 });
+  assert.ok(slice.chars <= 4100, `slice is ${slice.chars} chars`);
+  assert.ok(slice.text.length > 100, 'slice came back empty');
+});
+
+check('a size split is labelled honestly', () => {
+  const session = agentRunSession({ assistantMessages: 1, assistantChars: 30000 });
+  const { topics } = deriveTopics(session, { maxTopics: 40, maxSegmentChars: 8000 });
+  const first = topics[0];
+  // The first piece begins at the user turn, so it can use the user's words.
+  assert.equal(first.agentLabel, false, 'the opening piece should use the user turn');
+  // Anything after it begins inside the assistant's output, which must be declared.
+  const later = topics.find((t) => t.from > first.from || t.charFrom !== undefined);
+  if (later) {
+    assert.equal(later.agentLabel, true, 'a piece not opening on a user turn must be flagged');
+    assert.ok(!/^the user wants me/i.test(later.label), `narration leaked into the label: ${later.label}`);
+  }
+});
+
+check('splitting never makes a topic larger than the target', () => {
+  for (const [messages, chars] of [[8, 6000], [4, 15000], [1, 50000], [20, 2000]]) {
+    const session = agentRunSession({ assistantMessages: messages, assistantChars: chars });
+    const { topics } = deriveTopics(session, { maxTopics: 60, maxSegmentChars: 10000 });
+    for (const t of topics) {
+      assert.ok(t.chars <= 10000 + 250, `${messages}x${chars}: topic ${t.id} is ${t.chars} chars`);
+    }
+  }
+});
+
+check('every message stays reachable after splitting', () => {
+  const session = agentRunSession({ assistantMessages: 5, assistantChars: 7000 });
+  const { topics } = deriveTopics(session, { maxTopics: 40, maxSegmentChars: 11000 });
+  const firstUser = session.messages.findIndex((m) => m.role === 'user');
+  assert.equal(Math.min(...topics.map((t) => t.from)), firstUser);
+  assert.equal(Math.max(...topics.map((t) => t.to)), session.messages.length - 1);
+});
+
 // ── Report ─────────────────────────────────────────────────────────────────
 
 console.log(`\ntopics: ${passed} passed, ${failures.length} failed\n`);

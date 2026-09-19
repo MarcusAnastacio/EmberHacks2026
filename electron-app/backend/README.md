@@ -549,6 +549,63 @@ tells the model which section is which and requires every question to be underst
 its own — no "as discussed", no "the above", no unnamed "it". That took continuation
 phrasing from 5 of 9 to 1 of 9.
 
+### Measured size distribution
+
+376 topics derived from 49 real sessions. Everything is inside its bound, and the bounds
+are enforced rather than hoped for:
+
+```
+           n      p25      p50      p75      p90      p99      max
+TOPIC    376     7283    13944    22061    27504    29868    29988   target 30000
+SLICE    376     6688    10803    11957    11958    11958    11958   cap    12000
+PROMPT   376     9988    14103    15257    15258    15258    15258   = slice + ~3300
+```
+
+**Prompt: 15,258 characters maximum (~3,800 tokens).** That is the number that matters, and
+it is a cap rather than a distribution tail — p75 upward is flat against it, because the
+prompt is `min(slice, 12,000) + fixed instructions`.
+
+The topic column is the interesting one. Topics are *targeted* at 30,000 and were **not**
+bounded before: the maximum was 57,885, and 8 topics (2.1%) exceeded the target — meaning
+their slices showed the model only 20% of what they contained.
+
+### Splitting below the exchange level
+
+The 8 oversized topics were not blocked by the user/assistant distinction. They were blocked
+because splitting only considered *exchange* boundaries:
+
+| topic | exchanges | messages | largest message |
+|---|---|---|---|
+| 57,885 | 1 | 2 | **52,745** ← one message |
+| 41,861 | 6 | 16 | 8,116 |
+| 36,801 | 4 | 11 | 21,589 |
+| 32,758 | 3 | 8 | 13,025 |
+
+A segment with one exchange has no internal exchange boundary, so a long autonomous agent
+run after a single short prompt — one user turn and fifty agent turns — was **unsplittable
+however large it grew**. That is precisely the shape of the work this project is about.
+
+Splitting now happens at three levels, in order:
+
+1. **exchange boundaries** — semantic, scored (file change, word overlap, pause, markers)
+2. **message boundaries** — a size fallback, for segments with no internal exchange boundary
+3. **character ranges within one message** — for a message that is itself over the target,
+   cut at a line or sentence boundary so the pieces read as prose
+
+Pieces from levels 2 and 3 are marked `subSplit: true`, and a piece that does not open on a
+user turn sets `agentLabel: true` so the UI knows the label came from the assistant rather
+than from the user's own words. `messageRanges` may repeat a message index for two adjacent
+pieces of one message; `charFrom`/`charTo` say which part each owns, and
+`sourceRefs.messageIndex` stays valid because it names the containing turn.
+
+Result: **0 topics over target, max 29,988** (was 57,885), with 10 sub-split topics selected
+of which 4 are intra-message.
+
+Two bugs the split introduced and the tests caught: every piece of one message shares that
+message's index, so sorting by index alone shuffled them (the character offset is now the
+tiebreaker), and folding a small fragment into its neighbour could push the neighbour back
+over the target, undoing the split.
+
 ### The bounds
 
 | Stage | Bound | Default |

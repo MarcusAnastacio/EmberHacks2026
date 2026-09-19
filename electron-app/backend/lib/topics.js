@@ -128,6 +128,141 @@ function boundaryScore(prev, next) {
   return score;
 }
 
+
+/** Epoch ms of a message, used when a segment has no exchange to read it from. */
+function messages_ts(session, index) {
+  return session.messages[index]?.ts;
+}
+
+/** Per-message features for a range, used when a segment is split below the exchange level. */
+function messageFeatures(session, from, to) {
+  const files = new Set();
+  const tools = new Map();
+  let chars = 0;
+  for (let i = from; i <= to && i < session.messages.length; i++) {
+    const m = session.messages[i];
+    if (!m) continue;
+    chars += m.text.length;
+    for (const t of m.tools || []) {
+      const name = String(t?.name || 'tool');
+      tools.set(name, (tools.get(name) || 0) + 1);
+      for (const key of ['file_path', 'filePath', 'path', 'filename', 'file', 'notebook_path', 'target_file']) {
+        const v = t?.input?.[key];
+        if (typeof v === 'string' && v) files.add(v.replace(/^\.\//, ''));
+      }
+    }
+  }
+  return { files: [...files], tools, chars };
+}
+
+/**
+ * Split a segment that is still too large, at the finest granularity available.
+ *
+ * Exchange-level splitting cannot touch a single-exchange segment, and a long agent run
+ * after one short prompt is exactly that: measured on a real history, the largest topics
+ * that exceeded the size target were 3-9 exchanges with one large message each, plus two
+ * that were a single exchange containing one 52k-character assistant message.
+ *
+ * So this cuts at MESSAGE boundaries, and when a single message is itself over the
+ * target it cuts inside that message with a character range. Both are needed: the first
+ * fixes the multi-message cases (most of them), the second is the only thing that can
+ * address a message that is an essay by itself.
+ *
+ * The segment is a size fallback, not a semantic one, so `agentLabel` marks a topic whose
+ * label had to come from the assistant rather than from the user's own words.
+ */
+function splitBySize(segment, session, targetChars, maxPieces = 40) {
+  if (segment.chars <= targetChars) return [segment];
+
+  const messages = session.messages;
+  const firstIndex = segment.exchanges ? segment.exchanges[0].start : segment.from;
+  const lastIndex = segment.exchanges ? segment.exchanges[segment.exchanges.length - 1].end : segment.to;
+  const pieces = [];
+
+  let cursor = firstIndex;
+  while (cursor <= lastIndex && pieces.length < maxPieces) {
+    let end = cursor;
+    let chars = 0;
+    // A message too large to fit on its own is subdivided by character range below.
+    while (end <= lastIndex) {
+      const next = messages[end]?.text.length || 0;
+      if (chars > 0 && chars + next > targetChars) break;
+      chars += next;
+      end++;
+    }
+    const blockEnd = Math.max(cursor, end - 1);
+
+    if (chars > targetChars) {
+      // One message, larger than a whole topic should be: cut it into character ranges
+      // at line boundaries so the pieces read as coherent text rather than mid-sentence.
+      const text = messages[cursor].text;
+      let offset = 0;
+      while (offset < text.length && pieces.length < maxPieces) {
+        let take = Math.min(targetChars, text.length - offset);
+        if (offset + take < text.length) {
+          const nl = text.lastIndexOf('\n', offset + take);
+          const sentence = text.lastIndexOf('. ', offset + take);
+          const cut = Math.max(nl, sentence);
+          if (cut > offset + targetChars * 0.5) take = cut - offset + 1;
+        }
+        // The piece's own size, not the whole message's: passing `chars` here made
+        // every piece report the full message length.
+        pieces.push(makePiece(session, cursor, cursor, take, offset, offset + take));
+        offset += take;
+      }
+    } else {
+      pieces.push(makePiece(session, cursor, blockEnd, chars));
+    }
+    cursor = blockEnd + 1;
+  }
+
+  return pieces;
+}
+
+/** Build a segment-shaped object for a message range, optionally with a char window. */
+function makePiece(session, from, to, chars, charFrom, charTo) {
+  const features = messageFeatures(session, from, to);
+  return {
+    startExchange: from,
+    endExchange: to,
+    exchanges: [],
+    from,
+    to,
+    chars,
+    charFrom,
+    charTo,
+    files: features.files,
+    tools: features.tools,
+    subSplit: true,
+  };
+}
+
+/** A label for a piece that has no opening user turn of its own. */
+function agentLabelFrom(session, from, charFrom) {
+  const raw = session.messages[from]?.text || '';
+  const text = charFrom ? raw.slice(charFrom) : raw;
+  const firstBlock = text.split(/\n\s*\n/).find((b) => b.trim().length > 20) || text;
+  const clean = firstBlock
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[#*_`>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean) return `continued (turn ${from + 1})`;
+
+  // Strip narration addressed to nobody before taking a sentence. The assistant often
+  // opens with "The user wants me to …", which says nothing about the subject, and a
+  // quiz topic called that is worse than no label at all.
+  const stripped = clean
+    .replace(/^(?:ok(?:ay)?[,.]?\s*)?(?:the user|they|the assistant)\s+(?:wants?|asked?|is|has|says?|would like|needs?)\s+(?:me\s+)?(?:to\s+)?/i, '')
+    .replace(/^(?:now|next|then|so|alright|right)[,:]?\s+/i, '')
+    .trim();
+
+  const source = stripped.length > 20 ? stripped : clean;
+  const sentence = /^(.{20,110}?[.!?])(\s|$)/.exec(source);
+  const label = (sentence ? sentence[1] : source).slice(0, 100).trim();
+  return label || `continued (turn ${from + 1})`;
+}
+
 /**
  * Derive topics for a session.
  *
@@ -221,7 +356,15 @@ export function deriveTopics(session, options = {}) {
     segments = buildSegments(cuts);
   }
 
-  // --- 3. Rank and select. When there are more topics than the cap allows, the
+  // --- 3. Anything still over the target is split at message boundaries, and within
+  //        a single oversized message if that is all there is. Exchange-level
+  //        splitting above cannot touch a single-exchange segment, which is exactly
+  //        the shape of a long agent run after one short prompt.
+  const sized = [];
+  for (const segment of segments) sized.push(...splitBySize(segment, session, maxSegmentChars));
+  if (sized.length !== segments.length || sized.some((s) => s.subSplit)) segments = sized;
+
+  // --- 4. Rank and select. When there are more topics than the cap allows, the
   //        ones to keep are the ones a quiz would get the most out of — not an
   //        arbitrary merge of adjacent segments, which produced topics of 736k
   //        against a 130k median and then truncated most of what it kept.
@@ -233,8 +376,14 @@ export function deriveTopics(session, options = {}) {
   const selected = [...ranked].sort((a, b) => b.score - a.score).slice(0, maxTopics);
   const dropped = ranked.filter((r) => !selected.includes(r));
 
-  // Chronological order, because the slices are read in sequence.
-  const ordered = selected.sort((a, b) => a.segment.startExchange - b.segment.startExchange);
+  // Chronological order, because the slices are read in sequence. The character offset
+  // is the tiebreaker: every piece cut from one message shares that message's index, so
+  // without it the pieces of a single long message came out shuffled.
+  const ordered = selected.sort(
+    (a, b) =>
+      a.segment.startExchange - b.segment.startExchange ||
+      (a.segment.charFrom ?? -1) - (b.segment.charFrom ?? -1),
+  );
 
   // --- 4. Absorb segments too small to be worth a prompt of their own — but only
   //        when the boundary in front of them was weak. A short segment that
@@ -247,7 +396,10 @@ export function deriveTopics(session, options = {}) {
     const prev = merged[merged.length - 1];
     const boundaryBefore = scoreAfter[entry.segment.startExchange - 1] ?? 0;
     const weaklySeparated = boundaryBefore < threshold;
-    if (prev && weaklySeparated && entry.segment.chars < minSegmentChars) {
+    // Folding is for tidying up fragments, so it must not undo the size split by
+    // pushing the neighbour over the target.
+    const wouldFit = prev && prev.chars + entry.segment.chars <= maxSegmentChars;
+    if (prev && weaklySeparated && wouldFit && entry.segment.chars < minSegmentChars) {
       prev.exchanges = [...prev.exchanges, ...entry.segment.exchanges];
       prev.chars += entry.segment.chars;
       prev.endExchange = entry.segment.endExchange;
@@ -260,23 +412,74 @@ export function deriveTopics(session, options = {}) {
   // --- 5. Label each topic from its opening user turn.
   const topics = [];
   for (const segment of merged) {
-    const first = segment.exchanges[0];
-    const last = segment.exchanges[segment.exchanges.length - 1];
-    const files = [...new Set(segment.exchanges.flatMap((e) => [...e.files]))];
-    const tools = new Map();
-    for (const e of segment.exchanges) for (const [n, c] of e.tools) tools.set(n, (tools.get(n) || 0) + c);
+    const subSplit = Boolean(segment.subSplit);
+    const from = subSplit ? segment.from : segment.exchanges[0].start;
+    const to = subSplit ? segment.to : segment.exchanges[segment.exchanges.length - 1].end;
+
+    // A sub-split piece has no opening user turn of its own, so its label is taken from
+    // the text it does start with and flagged, rather than inventing a user statement.
+    let label;
+    let agentLabel = false;
+    if (subSplit) {
+      // A size-split piece may still happen to begin on a user turn — the split is by
+      // size, not by speaker. Use the user's own words when it does, and only fall back
+      // to the assistant's text when it does not.
+      const opening = session.messages[from];
+      if (opening?.role === 'user' && !segment.charFrom) {
+        label = labelFrom(opening.text, labelChars);
+      } else {
+        agentLabel = true;
+        label = labelFrom(agentLabelFrom(session, from, segment.charFrom), labelChars);
+      }
+    } else {
+      label = labelFrom(segment.exchanges[0].userText, labelChars);
+    }
+
+    const files = subSplit
+      ? segment.files
+      : [...new Set(segment.exchanges.flatMap((e) => [...e.files]))];
+    const tools = subSplit
+      ? segment.tools
+      : (() => {
+          const m = new Map();
+          for (const e of segment.exchanges) for (const [n, c] of e.tools) m.set(n, (m.get(n) || 0) + c);
+          return m;
+        })();
+
+    const first = { start: from, ts: messages_ts(session, from) };
+    const last = { end: to, endedAt: messages_ts(session, to) };
 
     topics.push({
       id: `t${topics.length + 1}`,
-      label: labelFrom(first.userText, labelChars),
+      label,
+      /** True when the label came from the assistant because no user turn opens it. */
+      agentLabel,
+      ...(segment.charFrom !== undefined ? { charFrom: segment.charFrom, charTo: segment.charTo } : {}),
       // The opening user turn, verbatim to a useful length. This is the topic
-      // statement and needs no model to write.
-      summary: clip(first.userText, 400),
-      messageRanges: [[first.start, last.end]],
-      from: first.start,
-      to: last.end,
-      exchanges: segment.exchanges.length,
-      userTurns: segment.exchanges.map((e) => e.userText.trim()).filter(Boolean),
+      // statement and needs no model to write. For a sub-split piece there is no such
+      // turn, so the summary is the piece's own opening text.
+      summary: subSplit
+        ? clip(
+            session.messages[from]?.role === 'user' && !segment.charFrom
+              ? session.messages[from].text
+              : agentLabelFrom(session, from, segment.charFrom),
+            400,
+          )
+        : clip(segment.exchanges[0].userText, 400),
+      /**
+       * Message indices this topic covers. For an intra-message split the same index
+       * appears in two consecutive topics — `charFrom`/`charTo` disambiguate which part
+       * of that message each one owns, and `sourceRefs.messageIndex` remains valid for
+       * both because it names the containing turn.
+       */
+      messageRanges: [[from, to]],
+      from,
+      to,
+      exchanges: subSplit ? 1 : segment.exchanges.length,
+      subSplit,
+      userTurns: subSplit
+        ? [session.messages[from]?.text?.trim()].filter(Boolean)
+        : segment.exchanges.map((e) => e.userText.trim()).filter(Boolean),
       files,
       tools: [...tools.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })),
       chars: segment.chars,
@@ -327,26 +530,52 @@ export function deriveTopics(session, options = {}) {
 function interestingness(segment, session) {
   let score = 0;
 
+  // Works off message ranges rather than exchanges, because a size-split piece has no
+  // exchanges of its own. Scoring those as zero exchanges dropped every piece out of
+  // the ranking, so the split never reached the output.
+  const ranges = segment.subSplit
+    ? [[segment.from, segment.to]]
+    : segment.exchanges.map((e) => [e.start, e.end]);
+
   // Files edited, not merely read. Strongest signal that something happened.
-  const edited = new Set();
   let wrote = 0;
-  for (const e of segment.exchanges) for (const [name, count] of e.tools) {
-    for (const file of e.files) edited.add(file);
+  let edited = 0;
+  const toolCounts = segment.subSplit
+    ? segment.tools
+    : (() => {
+        const m = new Map();
+        for (const e of segment.exchanges) for (const [n, c] of e.tools) m.set(n, (m.get(n) || 0) + c);
+        return m;
+      })();
+  for (const [name, count] of toolCounts) {
     if (/write|edit|create|patch|apply|insert|replace/i.test(name)) wrote += count;
   }
+  edited = (segment.files || []).length;
   score += Math.min(6, wrote) * 2;
-  score += Math.min(10, edited.size) * 0.6;
+  score += Math.min(10, edited) * 0.6;
 
-  // Substantive back-and-forth, with diminishing returns: one long exchange is
-  // not worth three times a topic with three exchanges.
-  score += Math.log2(1 + segment.exchanges.length) * 1.2;
-  score += Math.min(6, segment.exchanges.filter((e) => e.userText.trim().length > 80).length) * 0.5;
+  // Substantive back-and-forth, with diminishing returns. For a size-split piece the
+  // message count stands in for the exchange count.
+  const unitCount = segment.subSplit
+    ? Math.max(1, segment.to - segment.from + 1)
+    : segment.exchanges.length;
+  score += Math.log2(1 + unitCount) * 1.2;
 
-  // Code in either direction is what fill-in-the-blank questions need.
+  const substantive = ranges.reduce((n, [from, to]) => {
+    let count = 0;
+    for (let i = from; i <= to && i < session.messages.length; i++) {
+      if ((session.messages[i]?.text || '').trim().length > 80) count++;
+    }
+    return n + count;
+  }, 0);
+  score += Math.min(6, substantive) * 0.5;
+
+  // Code in either direction is what fill-in-the-blank questions need; errors are what
+  // "why did this fail" questions need.
   let codeBlocks = 0;
   let errorMentions = 0;
-  for (const e of segment.exchanges) {
-    for (let i = e.start; i <= e.end && i < session.messages.length; i++) {
+  for (const [from, to] of ranges) {
+    for (let i = from; i <= to && i < session.messages.length; i++) {
       const text = session.messages[i].text;
       codeBlocks += (text.match(/```/g) || []).length / 2;
       errorMentions += (text.match(/\b(error|exception|failed|failure|traceback|stack trace|bug|doesn't work|not working)\b/gi) || []).length;
@@ -355,12 +584,13 @@ function interestingness(segment, session) {
   score += Math.min(5, codeBlocks) * 1.1;
   score += Math.min(8, errorMentions) * 0.45;
 
-  // Size, logarithmically: a very large topic is usually more substantial, but it
-  // must not dominate the ranking on length alone.
+  // Size, logarithmically: a very large topic is usually more substantial, but it must
+  // not dominate the ranking on length alone.
   score += Math.log2(1 + segment.chars / 1000) * 0.8;
 
   return score;
 }
+
 
 /**
  * A topic label taken from the opening user turn, trimmed at a word boundary.
@@ -414,12 +644,20 @@ export function topicSlice(session, topic, options = {}) {
   const context = buildPrecedingContext(session, topic, contextBudget);
   const bodyBudget = Math.max(120, maxChars - header.length - context.text.length - MARKER_ROOM);
 
-  const body = renderTurnRange(session, {
-    from: topic.from,
-    to: topic.to,
-    includeCode,
-    finalIndex: lastAssistantIndex(session, topic.from, topic.to),
-  });
+  let body;
+  if (topic.charFrom !== undefined) {
+    // An intra-message piece: one message, cut to a character window. Rendering the
+    // whole message and truncating would show the first part of every piece.
+    const raw = session.messages[topic.from]?.text || '';
+    body = raw.slice(topic.charFrom, topic.charTo).trim();
+  } else {
+    body = renderTurnRange(session, {
+      from: topic.from,
+      to: topic.to,
+      includeCode,
+      finalIndex: lastAssistantIndex(session, topic.from, topic.to),
+    });
+  }
 
   let bodyText = body;
   let truncated = 0;
