@@ -49,3 +49,18 @@ To inspect the discovered structure:
 5. Repeat with a Python file containing `import`, `from ... import ...`, a function, a class, a method, and variables. Python symbol details appear when the Python language extension is installed and its symbol provider is active; import entries are detected locally regardless.
 
 The quiz still contains five questions. Gemini receives the active file source plus the local symbol structure, never the rest of the workspace.
+
+## Workspace Context
+
+VEX also builds a small ranked subset around the active file. Direct relative imports score 50, direct importers score 20, second-level related files score 20, and referenced symbols or definitions score 40. The active file itself scores 100. The analyzer does not recursively load the whole dependency graph.
+
+These limits can be changed under **Settings > Extensions > VEX**:
+
+- `vex.context.maxDepth`: import traversal depth, default `1`, maximum `2`.
+- `vex.context.maxFiles`: maximum files inspected, default `6`.
+- `vex.context.maxRelatedFiles`: related files included in the prompt, default `3`.
+- `vex.context.maxRelatedSourceCharacters`: aggregate source excerpt budget, default `8000` characters.
+- `vex.context.maxSourceCharactersPerFile`: per-file excerpt cap, default `4000` characters.
+- `vex.context.maxSymbols`: active-file symbols checked for definitions and references, default `20`.
+
+The complete active file remains the primary source sent to Gemini. Related files contribute only their highest-ranked metadata and budgeted excerpts.

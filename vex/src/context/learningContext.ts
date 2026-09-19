@@ -1,4 +1,5 @@
 import { CodeSymbol } from '../analysis/codeSymbol';
+import { RelevantContextItem } from '../analysis/workspaceContextAnalyzer';
 
 export interface LearningContext {
 	activeFilePath: string;
@@ -7,6 +8,7 @@ export interface LearningContext {
 	selectedCode?: string;
 	relatedSymbols?: string[];
 	codeSymbols?: CodeSymbol[];
+	relevantContext?: RelevantContextItem[];
 	agentChangeInformation?: string;
 	projectDescription?: string;
 }

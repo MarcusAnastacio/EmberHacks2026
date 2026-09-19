@@ -14,6 +14,7 @@ export function buildQuizPrompt(context: LearningContext, mode: QuizMode): strin
 		`Analyze the following source file (${context.activeFilePath}). Do not assume behavior that is not supported by the code.`,
 		`Programming language: ${context.programmingLanguage}`,
 		context.codeSymbols?.length ? `LOCAL CODE STRUCTURE:\n${JSON.stringify(context.codeSymbols, null, 2)}` : '',
+		context.relevantContext?.length ? `RANKED RELATED CONTEXT (do not assume this is the full workspace):\n${JSON.stringify(context.relevantContext, null, 2)}` : '',
 		context.relatedSymbols?.length ? `Related symbols: ${context.relatedSymbols.join(', ')}` : '',
 		context.projectDescription ? `Project description: ${context.projectDescription}` : '',
 		context.agentChangeInformation ? `Agent/change information: ${context.agentChangeInformation}` : '',
