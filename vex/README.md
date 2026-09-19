@@ -77,3 +77,9 @@ Selector limits are configurable under **Settings > Extensions > VEX**:
 - `vex.context.maxEstimatedTokens`: approximate context-token limit, default `6000`.
 
 Token estimates use approximately four characters per token and do not require a tokenizer dependency. The extension logs `[VEX context selector]` with the selected files, symbols, source characters, estimated tokens, and configured limits.
+
+## Git Change Context
+
+When the active file is inside a Git repository, VEX reads the current working-tree diff with `git diff HEAD`. It records changed files, added and deleted line counts, the active file's relevant diff, changed symbols whose ranges overlap changed lines, and the latest commit subject when available. This uses observable repository artifacts only; VEX does not attempt to access or reproduce an agent's private reasoning.
+
+Git analysis is optional. If Git is unavailable, the folder is not a repository, or the diff cannot be read, VEX continues generating the normal active-file quiz without change context. Git diagnostics are logged under `[VEX Git change analyzer]`.

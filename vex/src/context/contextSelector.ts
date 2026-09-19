@@ -114,6 +114,20 @@ export class ContextSelector {
 		if (context.agentChangeInformation) {
 			appendMetadata('AGENT CHANGES', context.agentChangeInformation);
 		}
+		if (context.agentChangeContext) {
+			const changes = context.agentChangeContext;
+			appendMetadata('CHANGE SUMMARY', JSON.stringify({
+				changedFiles: changes.changedFiles,
+				additions: changes.additions,
+				deletions: changes.deletions,
+				changedSymbols: changes.changedSymbols,
+				commitMessage: changes.commitMessage,
+				testResults: changes.testResults,
+			}, null, 2));
+			if (changes.relevantDiff) {
+				appendSource('RELEVANT GIT DIFF', context.activeFilePath, changes.relevantDiff, 60);
+			}
+		}
 		if (context.projectDescription) {
 			appendMetadata('PROJECT', context.projectDescription);
 		}

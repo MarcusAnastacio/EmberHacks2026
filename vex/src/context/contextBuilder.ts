@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
 import { analyzeActiveFile } from '../analysis/activeFileAnalyzer';
+import { analyzeAgentChanges } from '../analysis/gitChangeAnalyzer';
 import { WorkspaceContextAnalyzer } from '../analysis/workspaceContextAnalyzer';
 import { LearningContext } from './learningContext';
 
 export async function buildLearningContext(editor: vscode.TextEditor): Promise<LearningContext> {
 	const analysis = await analyzeActiveFile(editor);
+	const agentChangeContext = await analyzeAgentChanges(editor.document, analysis.codeSymbols);
 	const configuration = vscode.workspace.getConfiguration('vex.context');
 	const workspaceAnalysis = await new WorkspaceContextAnalyzer({
 		maxDepth: configuration.get<number>('maxDepth', 1),
@@ -39,6 +41,7 @@ export async function buildLearningContext(editor: vscode.TextEditor): Promise<L
 		...analysis,
 		relevantContext,
 		contextBudget,
+		agentChangeContext,
 		projectDescription: workspaceFolder?.name,
 	};
 }
