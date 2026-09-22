@@ -1,0 +1,113 @@
+# VEX
+
+VEX turns code written in VS Code into an interactive lesson. It sends the active file, or the selected code, to Gemini and presents a short quiz that explains the code's behavior, architecture, and tradeoffs.
+
+## Use It
+
+1. Press `F5` and choose **Run Extension**.
+2. In the Extension Development Host, open the VEX activity-bar view named **Learning Lab**.
+3. Choose **Set Gemini API Key** and paste your key. VS Code stores it in `SecretStorage`; it is not written to the project.
+4. Open a code file, choose a teaching mode, and select **Generate quiz**.
+
+You can also run **VEX: Generate Quiz from Current File** from the Command Palette. If you select code before running it, VEX teaches from that selection instead of the whole file.
+
+## Teaching Modes
+
+- **Guided tour** explains the code from fundamentals through its input and output.
+- **Architecture lens** focuses on responsibilities, data flow, dependencies, and tradeoffs.
+- **Challenge mode** uses prediction and debugging questions to strengthen recall.
+
+## Requirements
+
+- VS Code 1.138 or newer
+- A Gemini API key with access to `gemini-2.5-flash`
+
+The key is sent only to Google's Gemini API over HTTPS. Source code is included in the request so Gemini can create an evidence-based quiz.
+
+## Development
+
+Run `npm install`, then press `F5` or run `npm run compile`. The extension bundles to `dist/extension.js`.
+
+## Architecture
+
+- `src/analysis/` gathers facts from the active VS Code editor.
+- `src/context/` builds the typed `LearningContext` sent to the learning pipeline.
+- `src/llm/` owns Gemini model discovery, prompts, transport, retries, and API errors.
+- `src/quiz/` owns quiz models, JSON validation, and quiz-generation orchestration.
+- `src/extension.ts` registers VS Code commands and coordinates these layers.
+
+## Inspecting Local Analysis
+
+The analyzer only reads the active editor document. It uses VS Code's document symbol provider for language-aware symbols and adds lightweight import/export entries from the active file. It does not scan or send the entire workspace.
+
+To inspect the discovered structure:
+
+1. Start the extension with `F5`.
+2. Open a TypeScript file containing an import, exported function or class, a method, and a variable.
+3. Open **View > Output**, select **Log (Extension Host)**, and run **VEX: Generate Quiz from Current File**.
+4. Find the `[VEX analyzer]` entry. It includes the file path, language, symbol count, names, kinds, and one-based line ranges.
+5. Repeat with a Python file containing `import`, `from ... import ...`, a function, a class, a method, and variables. Python symbol details appear when the Python language extension is installed and its symbol provider is active; import entries are detected locally regardless.
+
+The quiz still contains five questions. Gemini receives the active file source plus the local symbol structure, never the rest of the workspace.
+
+## Workspace Context
+
+VEX also builds a small ranked subset around the active file. Direct relative imports score 50, direct importers score 20, second-level related files score 20, and referenced symbols or definitions score 40. The active file itself scores 100. The analyzer does not recursively load the whole dependency graph.
+
+These limits can be changed under **Settings > Extensions > VEX**:
+
+- `vex.context.maxDepth`: import traversal depth, default `1`, maximum `2`.
+- `vex.context.maxFiles`: maximum files inspected, default `6`.
+- `vex.context.maxRelatedFiles`: related files included in the prompt, default `3`.
+- `vex.context.maxRelatedSourceCharacters`: aggregate source excerpt budget, default `8000` characters.
+- `vex.context.maxSourceCharactersPerFile`: per-file excerpt cap, default `4000` characters.
+- `vex.context.maxSymbols`: active-file symbols checked for definitions and references, default `20`.
+
+The complete active file remains the primary source sent to Gemini. Related files contribute only their highest-ranked metadata and budgeted excerpts.
+
+## Gemini Context Selection
+
+Before the Gemini request, `ContextSelector` creates a compact structured context. Its priority order is selected code, active file, important local symbols, related files, referenced symbols, agent changes, and project metadata. It includes a selection summary listing the files and symbols that survived the budget.
+
+Selector limits are configurable under **Settings > Extensions > VEX**:
+
+- `vex.context.maxSourceCharacters`: total source-character limit, default `24000`.
+- `vex.context.maxContextFiles`: maximum distinct files, default `4`.
+- `vex.context.maxContextSymbols`: maximum symbols, default `20`.
+- `vex.context.maxEstimatedTokens`: approximate context-token limit, default `6000`.
+
+Token estimates use approximately four characters per token and do not require a tokenizer dependency. The extension logs `[VEX context selector]` with the selected files, symbols, source characters, estimated tokens, and configured limits.
+
+## Git Change Context
+
+When the active file is inside a Git repository, VEX reads the current working-tree diff with `git diff HEAD`. It records changed files, added and deleted line counts, the active file's relevant diff, changed symbols whose ranges overlap changed lines, and the latest commit subject when available. This uses observable repository artifacts only; VEX does not attempt to access or reproduce an agent's private reasoning.
+
+Git analysis is optional. If Git is unavailable, the folder is not a repository, or the diff cannot be read, VEX continues generating the normal active-file quiz without change context. Git diagnostics are logged under `[VEX Git change analyzer]`.
+
+## Agent Summary API
+
+An external coding-agent integration can provide an optional `AgentSummary` to `buildLearningContext(editor, agentSummary)`, or attach one later with `attachAgentSummary(context, summary)`. The summary supports the task/request, changed files, implementation changes, important decisions, introduced concepts, change dependencies, assumptions or limitations, and tests performed.
+
+The summary is treated as observable input only. VEX does not generate or infer it, and it never attempts to retrieve hidden model reasoning. The combined summary is normalized to a strict maximum of 300 words. When no summary is supplied, the `agentSummary` field is omitted from `LearningContext`.
+
+## Copilot Chat Handoff
+
+VS Code does not expose a public API for third-party extensions to silently read an existing GitHub Copilot Chat transcript. VEX therefore provides an explicit `@vex /summarizeChanges` chat participant. Invoke it from Chat after the relevant work, and VEX will use only the chat turns visible to its participant plus the active file and observable Git changes. The resulting summary is stored in workspace state and used by the next VEX quiz.
+
+This does not scrape Copilot's private history or chain-of-thought. If VEX was not mentioned in a chat session, that session's prior turns are not available to VEX through the public API.
+
+## Quiz Code References
+
+Each quiz question may include a validated reference to a file, symbol, and one-based line range from the supplied `LearningContext`. Questions with a reliable reference show **View Code**, which opens the file and selects the referenced range. References that do not exactly match known context files or symbol ranges are discarded, so Gemini cannot invent navigation targets or line numbers.
+
+## Local Learning History
+
+VEX stores quiz attempts locally in VS Code workspace state. Each attempt contains only the question, concept, correctness, difficulty, timestamp, and associated file/project. The store is bounded to the most recent 200 attempts.
+
+Before generating a quiz, VEX derives a compact learner profile containing understood concepts, frequently missed concepts, recent topics, and an approximate difficulty level. Only that profile is included in the Gemini context; the complete learning history is never transmitted. Repeated misses increase the priority of that concept, while consistently correct concepts are eligible for fewer basic questions.
+
+## Gemini Request Caching
+
+VEX hashes active source, bounded project structure, Git changes, learner profile, agent summary, and context settings. It locally caches active-file analysis, project structure, assembled learning contexts, and validated quizzes in VS Code workspace state. API keys are never cached or included in cache keys.
+
+Normal quiz generation reuses a cached quiz when the relevant context, mode/difficulty, learner profile, and five-question count are unchanged. Use **VEX: Regenerate Quiz (Bypass Cache)** or the **Regenerate quiz** button to force a new Gemini request. Cache decisions are logged under `[VEX Gemini]` and `[VEX cache]`.

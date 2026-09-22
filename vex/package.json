@@ -1,0 +1,171 @@
+{
+  "name": "vex",
+  "displayName": "VEX",
+  "description": "Uses Gemini-API to take agent generated code/applications and creates educational and interactive quizzes so developers can understand how the agent created their code and learn how to recreate it. ",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.138.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vex.openQuiz",
+        "title": "VEX: Open Quiz"
+      },
+      {
+        "command": "vex.generateQuiz",
+        "title": "VEX: Generate Quiz from Current File"
+      },
+      {
+        "command": "vex.regenerateQuiz",
+        "title": "VEX: Regenerate Quiz (Bypass Cache)"
+      },
+      {
+        "command": "vex.setGeminiApiKey",
+        "title": "VEX: Set Gemini API Key"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "vex.agentSummary",
+        "name": "vex",
+        "fullName": "VEX Learning Summary",
+        "description": "Summarize observable coding-agent changes for a VEX quiz",
+        "commands": [
+          {
+            "name": "summarizeChanges",
+            "description": "Summarize the observable changes from this VEX chat session"
+          }
+        ]
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vex",
+          "title": "VEX",
+          "icon": "$(book)"
+        }
+      ]
+    },
+    "views": {
+      "vex": [
+        {
+          "type": "webview",
+          "id": "vex.quizView",
+          "name": "Learning Lab"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "VEX",
+      "properties": {
+        "vex.context.maxDepth": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 2,
+          "description": "Maximum dependency-analysis depth for related workspace context."
+        },
+        "vex.context.maxFiles": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum number of related files inspected during local analysis."
+        },
+        "vex.context.maxRelatedFiles": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Maximum number of ranked related files included in the Gemini context."
+        },
+        "vex.context.maxRelatedSourceCharacters": {
+          "type": "number",
+          "default": 8000,
+          "minimum": 0,
+          "maximum": 50000,
+          "description": "Total character budget for related source excerpts sent to Gemini."
+        },
+        "vex.context.maxSourceCharactersPerFile": {
+          "type": "number",
+          "default": 4000,
+          "minimum": 0,
+          "maximum": 20000,
+          "description": "Maximum source characters retained per discovered related file."
+        },
+        "vex.context.maxSymbols": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum active-file symbols inspected for local references and definitions."
+        },
+        "vex.context.maxSourceCharacters": {
+          "type": "number",
+          "default": 24000,
+          "minimum": 1000,
+          "maximum": 100000,
+          "description": "Maximum source characters selected for the Gemini prompt."
+        },
+        "vex.context.maxContextFiles": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum distinct files represented in the Gemini prompt."
+        },
+        "vex.context.maxContextSymbols": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum symbols represented in the Gemini prompt."
+        },
+        "vex.context.maxEstimatedTokens": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 500,
+          "maximum": 32000,
+          "description": "Approximate maximum tokens for the compact context sent to Gemini."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.138.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.x",
+    "typescript-eslint": "^8.61.1",
+    "eslint": "^10.5.0",
+    "esbuild": "^0.28.1",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^6.0.3",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0"
+  },
+  "overrides": {
+    "diff": "^8.0.4",
+    "serialize-javascript": "^7.0.6"
+  }
+}
